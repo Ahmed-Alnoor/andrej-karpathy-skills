@@ -422,7 +422,7 @@ function gaugeHtml(label,score,count){const pct=score==null?0:Math.max(0,Math.mi
 function requestDonutData(){const open=state.requests.filter(r=>['pending_auditor_review','more_information_required'].includes(r.status)).length,escalated=state.requests.filter(r=>r.status==='pending_manager_review').length,closed=state.requests.filter(r=>['approved_by_auditor','approved_by_manager','rejected_by_manager','closed'].includes(r.status)).length,total=open+escalated+closed||1;const a=open/total*100,b=(open+escalated)/total*100;return {open,escalated,closed,total:open+escalated+closed,bg:`conic-gradient(var(--orange) 0 ${a}%,var(--blue) ${a}% ${b}%,var(--green) ${b}% 100%)`}}
 function dashboardDate(){const finalized=state.reports.filter(r=>r.status==='finalized'||r.status==='disputed').sort((a,b)=>b.date.localeCompare(a.date));return finalized[0]?.date||selectedDate}
 function monthKeys(endMonth,count=6){const [y,m]=endMonth.split('-').map(Number),out=[];for(let i=count-1;i>=0;i--){const d=new Date(y,m-1-i,1);out.push(`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`)}return out}
-function employeeMonthlyScore(month,employeeId){const dates=state.reports.filter(r=>r.date.startsWith(month)&&['finalized','disputed'].includes(r.status)).map(r=>r.date);return avg(dates.map(d=>dailyScore(d,employeeId)))}
+function employeeMonthlyScore(month,employeeId){const dates=window.gcIsAssessed?[...new Set((state.records||[]).map(r=>r.date).concat((state.reports||[]).filter(r=>['finalized','disputed'].includes(r.status)).map(r=>r.date)))].filter(d=>d&&d.startsWith(month)):state.reports.filter(r=>r.date.startsWith(month)&&['finalized','disputed'].includes(r.status)).map(r=>r.date);return avg(dates.map(d=>dailyScore(d,employeeId)))}
 function employeeMonthlyTrend(employeeId,count=6){const locale=state.lang==='ar'?'ar-AE':'en-GB';return monthKeys(selectedDate.slice(0,7),count).map(month=>({month,label:new Date(month+'-01T12:00:00').toLocaleDateString(locale,{month:'short',year:'2-digit'}),value:employeeMonthlyScore(month,employeeId)}))}
 function employeeTrendSummary(points){const values=points.filter(p=>p.value!=null);if(values.length<2)return {status:'Need more data',className:'insufficient',change:null,latest:values.at(-1)?.value??null,months:values.length};const first=values[0].value,last=values.at(-1).value,diff=Math.round((last-first)*100)/100;return {status:diff>.05?'Improving':diff<-.05?'Declining':'Stable',className:diff>.05?'improving':diff<-.05?'declining':'stable',change:diff,latest:last,months:values.length}}
 function employeeMonthlyTrendSvg(points,target){const W=760,H=250,p={l:46,r:22,t:24,b:42},iw=W-p.l-p.r,ih=H-p.t-p.b,finite=points.map((d,i)=>({...d,i})).filter(d=>Number.isFinite(d.value));if(!finite.length)return '<div class="empty">No finalized monthly performance data yet.</div>';const min=Math.max(0,Math.min(3.5,Math.min(...finite.map(x=>x.value),target)-.35)),max=5,x=i=>p.l+(points.length===1?iw/2:i*iw/(points.length-1)),y=v=>p.t+(max-v)/(max-min)*ih;const line=finite.map((d,j)=>`${j?'L':'M'} ${x(d.i).toFixed(1)} ${y(d.value).toFixed(1)}`).join(' '),grids=[4,4.5,5].map(v=>`<line class="chart-gridline" x1="${p.l}" y1="${y(v)}" x2="${W-p.r}" y2="${y(v)}"></line><text class="chart-label" x="${p.l-8}" y="${y(v)+3}" text-anchor="end">${v.toFixed(1)}</text>`).join('');return `<svg class="chart-svg" style="height:250px" viewBox="0 0 ${W} ${H}" role="img" aria-label="Employee monthly performance trend">${grids}<line class="target-line" x1="${p.l}" y1="${y(target)}" x2="${W-p.r}" y2="${y(target)}"></line><text class="chart-label" x="${W-p.r}" y="${y(target)-7}" text-anchor="end">Target ${target.toFixed(2)}</text><line class="chart-axis" x1="${p.l}" y1="${p.t+ih}" x2="${W-p.r}" y2="${p.t+ih}"></line>${finite.length>1?`<path class="chart-line" d="${line}"></path>`:''}${points.map((d,i)=>`${Number.isFinite(d.value)?`<circle class="chart-dot" cx="${x(i)}" cy="${y(d.value)}" r="5"></circle><text class="chart-value" x="${x(i)}" y="${y(d.value)-11}" text-anchor="middle">${d.value.toFixed(2)}</text>`:`<circle class="trend-no-score" cx="${x(i)}" cy="${p.t+ih}" r="3"></circle>`}<text class="chart-label" x="${x(i)}" y="${H-12}" text-anchor="middle">${d.label}</text>`).join('')}</svg>`}
@@ -446,13 +446,13 @@ function employeeSummaryTable(date){const rows=state.employees.filter(e=>e.role=
 function scoreHtmlCell(s){return `<td class="number">${scoreHtml(s)}</td>`}
 function weekStart(dateStr){const d=new Date(dateStr+'T12:00:00'),day=d.getDay();const diff=day===0?-6:1-day;d.setDate(d.getDate()+diff);return d}
 function dateISO(d){return d.toISOString().slice(0,10)}
-function renderWeekly(){const anchor=selectedDate,start=weekStart(anchor),days=Array.from({length:6},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return dateISO(d)});const visibleEmployees=currentUser().role==='csa'?[currentUser()]:state.employees.filter(e=>e.role==='csa'&&e.active!==false);const rows=visibleEmployees.map(e=>{const daily=days.map(d=>['finalized','disputed'].includes(report(d).status)?dailyScore(d,e.id):null),weekly=avg(daily);return {e,daily,weekly}}).filter(x=>x.weekly!=null);return `<div class="card section-card"><div class="section-head"><div><h2>Weekly performance report</h2><p>${fmtDate(days[0])} to ${fmtDate(days[5])}</p></div><div class="field"><label>Select any date in week</label><input id="weeklyDate" type="date" value="${anchor}"></div></div><div class="summary-strip"><div class="summary-item"><span>Team average</span><strong>${avg(rows.map(x=>x.weekly))?.toFixed(2)||'—'}</strong></div><div class="summary-item"><span>Employees assessed</span><strong>${rows.length}</strong></div><div class="summary-item"><span>Target</span><strong>${state.settings.target.toFixed(2)}</strong></div><div class="summary-item"><span>Highest score</span><strong>${rows.length?Math.max(...rows.map(x=>x.weekly)).toFixed(2):'—'}</strong></div><div class="summary-item"><span>Open disputes</span><strong>${state.requests.filter(x=>days.includes(x.reportDate)&&!x.status.includes('approved')&&!x.status.includes('closed')).length}</strong></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Employee</th>${days.map(d=>`<th class="number">${new Date(d+'T12:00:00').toLocaleDateString('en-GB',{weekday:'short'})}<br>${d.slice(8)}</th>`).join('')}<th class="number">Days assessed</th><th class="number">Weekly average</th><th>Rate</th></tr></thead><tbody>${rows.map(x=>`<tr><td><b>${esc(x.e.name)}</b><br><span class="muted">${esc(x.e.department)}</span></td>${x.daily.map(scoreHtmlCell).join('')}<td class="number">${x.daily.filter(v=>v!=null).length}</td><td class="number">${scoreHtml(x.weekly)}</td><td><span class="badge ${x.weekly>=4.5?'good':x.weekly>=4?'acceptable':'bad'}">${rating(x.weekly)}</span></td></tr>`).join('')}</tbody></table></div></div>`}
-function renderMonthly(){const month=selectedDate.slice(0,7),[y,m]=month.split('-').map(Number),daysIn=new Date(y,m,0).getDate(),dates=Array.from({length:daysIn},(_,i)=>`${month}-${String(i+1).padStart(2,'0')}`),weeks=[];dates.forEach(d=>{const s=dateISO(weekStart(d));if(!weeks.includes(s))weeks.push(s)});const visibleEmployees=currentUser().role==='csa'?[currentUser()]:state.employees.filter(e=>e.role==='csa'&&e.active!==false);const rows=visibleEmployees.map(e=>{const weekScores=weeks.map(ws=>{const st=new Date(ws+'T12:00:00'),ds=Array.from({length:6},(_,i)=>{const x=new Date(st);x.setDate(st.getDate()+i);return dateISO(x)}).filter(d=>d.startsWith(month));return avg(ds.map(d=>['finalized','disputed'].includes(report(d).status)?dailyScore(d,e.id):null))});const monthScore=avg(dates.map(d=>['finalized','disputed'].includes(report(d).status)?dailyScore(d,e.id):null));return {e,weekScores,monthScore}}).filter(x=>x.monthScore!=null);return `<div class="card section-card"><div class="section-head"><div><h2>Monthly performance report</h2><p>Daily-weighted monthly average</p></div><div class="field"><label>Month</label><input id="monthlyDate" type="month" value="${month}"></div></div><div class="summary-strip"><div class="summary-item"><span>Monthly team average</span><strong>${avg(rows.map(x=>x.monthScore))?.toFixed(2)||'—'}</strong></div><div class="summary-item"><span>Employees assessed</span><strong>${rows.length}</strong></div><div class="summary-item"><span>Weeks shown</span><strong>${weeks.length}</strong></div><div class="summary-item"><span>Target</span><strong>${state.settings.target.toFixed(2)}</strong></div><div class="summary-item"><span>Highest performer</span><strong>${rows.sort((a,b)=>b.monthScore-a.monthScore)[0]?.e.name.split(' ')[0]||'—'}</strong></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Employee</th>${weeks.map((_,i)=>`<th class="number">Week ${i+1}</th>`).join('')}<th class="number">Weeks assessed</th><th class="number">Monthly average</th><th>Rate</th></tr></thead><tbody>${rows.map(x=>`<tr><td><b>${esc(x.e.name)}</b><br><span class="muted">${esc(x.e.department)}</span></td>${x.weekScores.map(scoreHtmlCell).join('')}<td class="number">${x.weekScores.filter(v=>v!=null).length}</td><td class="number">${scoreHtml(x.monthScore)}</td><td><span class="badge ${x.monthScore>=4.5?'good':x.monthScore>=4?'acceptable':'bad'}">${rating(x.monthScore)}</span></td></tr>`).join('')}</tbody></table></div></div>`}
-function renderMyPerformance(){const u=currentUser(),who=u.role==='csa'?u:state.employees.find(e=>e.id==='fitoun'),dates=state.reports.filter(r=>['finalized','disputed'].includes(r.status)).sort((a,b)=>b.date.localeCompare(a.date)).map(r=>r.date),scores=dates.map(d=>({d,s:dailyScore(d,who.id)})).filter(x=>x.s!=null);return `<div class="kpi-grid grid"><div class="card kpi"><span class="kpi-label">Latest score</span><div class="kpi-value">${scores[0]?.s.toFixed(2)||'—'}</div><div class="kpi-sub">${scores[0]?fmtDate(scores[0].d):'No assessment'}</div></div><div class="card kpi"><span class="kpi-label">Average score</span><div class="kpi-value">${avg(scores.map(x=>x.s))?.toFixed(2)||'—'}</div><div class="kpi-sub">All finalized reports</div></div><div class="card kpi"><span class="kpi-label">Target</span><div class="kpi-value">${state.settings.target.toFixed(2)}</div><div class="kpi-sub">Performance target</div></div><div class="card kpi"><span class="kpi-label">My requests</span><div class="kpi-value">${state.requests.filter(r=>r.employeeId===who.id).length}</div><div class="kpi-sub">Submitted score reviews</div></div></div><div class="card section-card"><div class="section-head"><div><h2>${u.role==='csa'?'My finalized reports':'Example private employee view'}</h2><p>CSA users can only see their own work and scores.</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Date</th>${Object.values(moduleLabels).map(x=>`<th class="number">${x}</th>`).join('')}<th class="number">Daily score</th><th>Rating</th><th>Request deadline</th><th></th></tr></thead><tbody>${scores.map(x=>{const existing=state.requests.find(r=>r.employeeId===who.id&&r.reportDate===x.d);return `<tr><td><b>${fmtDate(x.d)}</b></td>${Object.keys(moduleLabels).map(m=>scoreHtmlCell(employeeModuleScore(x.d,who.id,m))).join('')}<td class="number">${scoreHtml(x.s)}</td><td>${rating(x.s)}</td><td>${fmtDateTime(requestDeadline(x.d))}</td><td>${existing?statusBadge(existing.status):(u.role==='csa'?`<button class="btn small primary" data-request-date="${x.d}" ${canRequest(x.d,who.id)?'':'disabled'}>Request change</button>`:'')}</td></tr>`}).join('')||'<tr><td colspan="10" class="empty">No finalized scores assigned to this user.</td></tr>'}</tbody></table></div></div>`}
+function renderWeekly(){const anchor=selectedDate,start=weekStart(anchor),days=Array.from({length:6},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return dateISO(d)});const visibleEmployees=currentUser().role==='csa'?[currentUser()]:state.employees.filter(e=>e.role==='csa'&&e.active!==false);const rows=visibleEmployees.map(e=>{const daily=days.map(d=>(window.gcIsAssessed?window.gcIsAssessed(d):['finalized','disputed'].includes(report(d).status))?dailyScore(d,e.id):null),weekly=avg(daily);return {e,daily,weekly}}).filter(x=>x.weekly!=null);return `<div class="card section-card"><div class="section-head"><div><h2>Weekly performance report</h2><p>${fmtDate(days[0])} to ${fmtDate(days[5])}</p></div><div class="field"><label>Select any date in week</label><input id="weeklyDate" type="date" value="${anchor}"></div></div><div class="summary-strip"><div class="summary-item"><span>Team average</span><strong>${avg(rows.map(x=>x.weekly))?.toFixed(2)||'—'}</strong></div><div class="summary-item"><span>Employees assessed</span><strong>${rows.length}</strong></div><div class="summary-item"><span>Target</span><strong>${state.settings.target.toFixed(2)}</strong></div><div class="summary-item"><span>Highest score</span><strong>${rows.length?Math.max(...rows.map(x=>x.weekly)).toFixed(2):'—'}</strong></div><div class="summary-item"><span>Open disputes</span><strong>${state.requests.filter(x=>days.includes(x.reportDate)&&!x.status.includes('approved')&&!x.status.includes('closed')).length}</strong></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Employee</th>${days.map(d=>`<th class="number">${new Date(d+'T12:00:00').toLocaleDateString('en-GB',{weekday:'short'})}<br>${d.slice(8)}</th>`).join('')}<th class="number">Days assessed</th><th class="number">Weekly average</th><th>Rate</th></tr></thead><tbody>${rows.map(x=>`<tr><td><b>${esc(x.e.name)}</b><br><span class="muted">${esc(x.e.department)}</span></td>${x.daily.map(scoreHtmlCell).join('')}<td class="number">${x.daily.filter(v=>v!=null).length}</td><td class="number">${scoreHtml(x.weekly)}</td><td><span class="badge ${x.weekly>=4.5?'good':x.weekly>=4?'acceptable':'bad'}">${rating(x.weekly)}</span></td></tr>`).join('')}</tbody></table></div></div>`}
+function renderMonthly(){const month=selectedDate.slice(0,7),[y,m]=month.split('-').map(Number),daysIn=new Date(y,m,0).getDate(),dates=Array.from({length:daysIn},(_,i)=>`${month}-${String(i+1).padStart(2,'0')}`),weeks=[];dates.forEach(d=>{const s=dateISO(weekStart(d));if(!weeks.includes(s))weeks.push(s)});const visibleEmployees=currentUser().role==='csa'?[currentUser()]:state.employees.filter(e=>e.role==='csa'&&e.active!==false);const rows=visibleEmployees.map(e=>{const weekScores=weeks.map(ws=>{const st=new Date(ws+'T12:00:00'),ds=Array.from({length:6},(_,i)=>{const x=new Date(st);x.setDate(st.getDate()+i);return dateISO(x)}).filter(d=>d.startsWith(month));return avg(ds.map(d=>(window.gcIsAssessed?window.gcIsAssessed(d):['finalized','disputed'].includes(report(d).status))?dailyScore(d,e.id):null))});const monthScore=avg(dates.map(d=>(window.gcIsAssessed?window.gcIsAssessed(d):['finalized','disputed'].includes(report(d).status))?dailyScore(d,e.id):null));return {e,weekScores,monthScore}}).filter(x=>x.monthScore!=null);return `<div class="card section-card"><div class="section-head"><div><h2>Monthly performance report</h2><p>Daily-weighted monthly average</p></div><div class="field"><label>Month</label><input id="monthlyDate" type="month" value="${month}"></div></div><div class="summary-strip"><div class="summary-item"><span>Monthly team average</span><strong>${avg(rows.map(x=>x.monthScore))?.toFixed(2)||'—'}</strong></div><div class="summary-item"><span>Employees assessed</span><strong>${rows.length}</strong></div><div class="summary-item"><span>Weeks shown</span><strong>${weeks.length}</strong></div><div class="summary-item"><span>Target</span><strong>${state.settings.target.toFixed(2)}</strong></div><div class="summary-item"><span>Highest performer</span><strong>${rows.sort((a,b)=>b.monthScore-a.monthScore)[0]?.e.name.split(' ')[0]||'—'}</strong></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Employee</th>${weeks.map((_,i)=>`<th class="number">Week ${i+1}</th>`).join('')}<th class="number">Weeks assessed</th><th class="number">Monthly average</th><th>Rate</th></tr></thead><tbody>${rows.map(x=>`<tr><td><b>${esc(x.e.name)}</b><br><span class="muted">${esc(x.e.department)}</span></td>${x.weekScores.map(scoreHtmlCell).join('')}<td class="number">${x.weekScores.filter(v=>v!=null).length}</td><td class="number">${scoreHtml(x.monthScore)}</td><td><span class="badge ${x.monthScore>=4.5?'good':x.monthScore>=4?'acceptable':'bad'}">${rating(x.monthScore)}</span></td></tr>`).join('')}</tbody></table></div></div>`}
+function renderMyPerformance(){const u=currentUser(),who=u.role==='csa'?u:state.employees.find(e=>e.id==='fitoun'),dates=(window.gcDatesWithData?window.gcDatesWithData(who.id):state.reports.filter(r=>['finalized','disputed'].includes(r.status)).sort((a,b)=>b.date.localeCompare(a.date)).map(r=>r.date)),scores=dates.map(d=>({d,s:dailyScore(d,who.id)})).filter(x=>x.s!=null);return `<div class="kpi-grid grid"><div class="card kpi"><span class="kpi-label">Latest score</span><div class="kpi-value">${scores[0]?.s.toFixed(2)||'—'}</div><div class="kpi-sub">${scores[0]?fmtDate(scores[0].d):'No assessment'}</div></div><div class="card kpi"><span class="kpi-label">Average score</span><div class="kpi-value">${avg(scores.map(x=>x.s))?.toFixed(2)||'—'}</div><div class="kpi-sub">All finalized reports</div></div><div class="card kpi"><span class="kpi-label">Target</span><div class="kpi-value">${state.settings.target.toFixed(2)}</div><div class="kpi-sub">Performance target</div></div><div class="card kpi"><span class="kpi-label">My requests</span><div class="kpi-value">${state.requests.filter(r=>r.employeeId===who.id).length}</div><div class="kpi-sub">Submitted score reviews</div></div></div><div class="card section-card"><div class="section-head"><div><h2>${u.role==='csa'?'My finalized reports':'Example private employee view'}</h2><p>CSA users can only see their own work and scores.</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Date</th>${Object.values(moduleLabels).map(x=>`<th class="number">${x}</th>`).join('')}<th class="number">Daily score</th><th>Rating</th><th>Request deadline</th><th></th></tr></thead><tbody>${scores.map(x=>{const existing=state.requests.find(r=>r.employeeId===who.id&&r.reportDate===x.d);return `<tr><td><b>${fmtDate(x.d)}</b></td>${Object.keys(moduleLabels).map(m=>scoreHtmlCell(employeeModuleScore(x.d,who.id,m))).join('')}<td class="number">${scoreHtml(x.s)}</td><td>${rating(x.s)}</td><td>${fmtDateTime(requestDeadline(x.d))}</td><td>${existing?statusBadge(existing.status):(u.role==='csa'?`<button class="btn small primary" data-request-date="${x.d}" ${canRequest(x.d,who.id)?'':'disabled'}>Request change</button>`:'')}</td></tr>`}).join('')||'<tr><td colspan="10" class="empty">No finalized scores assigned to this user.</td></tr>'}</tbody></table></div></div>`}
 function renderRequests(){const u=currentUser();let rs=state.requests;if(u.role==='csa')rs=rs.filter(r=>r.employeeId===u.id);return `<div class="card section-card"><div class="section-head"><div><h2>Score change requests</h2><p>Initial deadline: two working days at 5:00 PM. Escalation: one working day at 5:00 PM.</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>ID</th><th>Employee</th><th>Report</th><th>Section</th><th class="number">Current</th><th class="number">Requested</th><th>Status</th><th>Deadline</th><th>Reason</th></tr></thead><tbody>${rs.length?rs.sort((a,b)=>b.createdAt.localeCompare(a.createdAt)).map(r=>`<tr data-open-request="${r.id}" style="cursor:pointer"><td><b>${r.id.slice(-6).toUpperCase()}</b></td><td>${esc(emp(r.employeeId)?.name||'')}</td><td>${fmtDate(r.reportDate)}</td><td>${moduleLabels[r.module]}</td><td class="number">${Number(r.currentScore).toFixed(2)}</td><td class="number">${Number(r.requestedScore).toFixed(2)}</td><td>${statusBadge(r.status)}</td><td>${fmtDateTime(r.status.includes('manager')?r.escalationDeadline:r.initialDeadline)}</td><td>${esc(r.reason)}</td></tr>`).join(''):'<tr><td colspan="9" class="empty">No score requests have been submitted.</td></tr>'}</tbody></table></div></div>`}
 function renderReview(){const u=currentUser();let rs=state.requests.filter(r=>u.role==='manager'?['pending_manager_review'].includes(r.status):u.role==='auditor'?['pending_auditor_review','more_information_required'].includes(r.status):!['approved_by_auditor','approved_by_manager','rejected_by_manager','closed'].includes(r.status));return `<div class="grid two-col"><div class="card section-card"><div class="section-head"><div><h2>${u.role==='manager'?'Manager escalations':'Review queue'}</h2><p>${u.role==='auditor'?'Requests come to Fitoun first.':'Escalated requests require a final decision.'}</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Employee</th><th>Date</th><th>Section</th><th>Status</th><th></th></tr></thead><tbody>${rs.length?rs.map(r=>`<tr><td><b>${esc(emp(r.employeeId).name)}</b></td><td>${fmtDate(r.reportDate)}</td><td>${moduleLabels[r.module]}</td><td>${statusBadge(r.status)}</td><td><button class="btn small primary" data-open-request="${r.id}">Review</button></td></tr>`).join(''):'<tr><td colspan="5" class="empty">No requests waiting for your review.</td></tr>'}</tbody></table></div></div><div class="card section-card"><h2 style="font-size:16px;margin-top:0">Workflow</h2><div class="role-note" style="line-height:1.8">1. CSA submits within two working days by 5:00 PM.<br>2. Fitoun reviews first.<br>3. CSA can accept or escalate a rejection/partial approval.<br>4. Abdulaziz makes the final management decision.<br>5. Approved changes recalculate daily, weekly, monthly and ranking results.</div></div></div>`}
-function rankingPeriodScores(){const month=selectedDate.slice(0,7),dates=state.reports.filter(r=>r.date.startsWith(month)&&['finalized','disputed'].includes(r.status)).map(r=>r.date);return state.employees.filter(e=>e.role==='csa'&&e.active!==false).map(e=>({e,score:avg(dates.map(d=>dailyScore(d,e.id))),days:dates.filter(d=>dailyScore(d,e.id)!=null).length})).filter(x=>x.score!=null).sort((a,b)=>b.score-a.score)}
-function renderRanking(){const rows=rankingPeriodScores();return `<div class="card section-card"><div class="section-head"><div><h2>Staff ranking</h2><p>Restricted to Aseel, Fitoun and Abdulaziz.</p></div><div class="field"><label>Month</label><input id="rankingDate" type="month" value="${selectedDate.slice(0,7)}"></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Rank</th><th>Employee</th><th>Department</th><th class="number">Days assessed</th><th class="number">Monthly average</th><th>Rating</th><th>Trend</th></tr></thead><tbody>${rows.map((x,i)=>`<tr><td><span class="rank ${i<3?'top':''}">${i+1}</span></td><td><b>${esc(x.e.name)}</b></td><td>${esc(x.e.department)}</td><td class="number">${x.days}</td><td class="number">${scoreHtml(x.score)}</td><td><span class="badge ${x.score>=4.5?'good':x.score>=4?'acceptable':'bad'}">${rating(x.score)}</span></td><td>${employeeTrendSummary(employeeMonthlyTrend(x.e.id,3)).status}</td></tr>`).join('')}</tbody></table></div></div>`}
+function rankingPeriodScores(){const month=selectedDate.slice(0,7),dates=[...new Set((state.records||[]).map(r=>r.date).concat((state.reports||[]).filter(r=>['finalized','disputed'].includes(r.status)).map(r=>r.date)))].filter(d=>d&&d.startsWith(month));return state.employees.filter(e=>e.role==='csa'&&e.active!==false).map(e=>({e,score:avg(dates.map(d=>dailyScore(d,e.id))),days:dates.filter(d=>dailyScore(d,e.id)!=null).length})).filter(x=>x.score!=null).sort((a,b)=>b.score-a.score)}
+function renderRanking(){const rows=rankingPeriodScores();return `<div class="card section-card"><div class="section-head"><div><h2>Staff ranking</h2><p>Visible only to auditor, manager and admin.</p></div><div class="field"><label>Month</label><input id="rankingDate" type="month" value="${selectedDate.slice(0,7)}"></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Rank</th><th>Employee</th><th>Department</th><th class="number">Days assessed</th><th class="number">Monthly average</th><th>Rating</th><th>Trend</th></tr></thead><tbody>${rows.map((x,i)=>`<tr><td><span class="rank ${i<3?'top':''}">${i+1}</span></td><td><b>${esc(x.e.name)}</b></td><td>${esc(x.e.department)}</td><td class="number">${x.days}</td><td class="number">${scoreHtml(x.score)}</td><td><span class="badge ${x.score>=4.5?'good':x.score>=4?'acceptable':'bad'}">${rating(x.score)}</span></td><td>${employeeTrendSummary(employeeMonthlyTrend(x.e.id,3)).status}</td></tr>`).join('')}</tbody></table></div></div>`}
 function accessDescription(role){return role==='csa'?'Own reports only':role==='auditor'?'Edit reports, first review, ranking':role==='manager'?'Edit reports, reopen reports, escalations, all reports, ranking':'Full system access'}
 function roleOptions(role){return ['csa','auditor','manager','admin'].map(r=>`<option value="${r}" ${r===role?'selected':''}>${r==='csa'?'CSA':r.charAt(0).toUpperCase()+r.slice(1)}</option>`).join('')}
 function activeAdmins(){return state.employees.filter(e=>e.role==='admin'&&e.active!==false)}
@@ -699,7 +699,7 @@ renderEmployees=function(){if(!can('manage_employees'))return'<div class="card s
 function openPermissions(id){const e=emp(id);if(!e)return;const effective=v6Permissions(e);modal(`Access permissions — ${e.name}`,`<div class="role-note" style="margin-bottom:12px">The role provides default access. Individual switches below can increase or reduce access for this employee.</div><div class="permission-grid">${Object.entries(V6_PERMISSION_DEFS).map(([key,[name,desc]])=>`<label class="permission-item"><input type="checkbox" data-permission-key="${key}" ${effective[key]?'checked':''}><span><b>${name}</b><small>${desc}</small></span></label>`).join('')}</div>`,[{label:'Cancel',class:'btn',close:true},{label:'Reset to role defaults',class:'btn',action:()=>{e.permissions={};log('Employee permissions reset',e.name);save();closeModal();renderPage();toast('Permissions reset to role defaults.')}},{label:'Save permissions',class:'btn primary',action:()=>{const defaults=V6_ROLE_PERMISSIONS[e.role]||{},custom={};document.querySelectorAll('[data-permission-key]').forEach(x=>{const k=x.dataset.permissionKey;if(!!x.checked!==!!defaults[k])custom[k]=!!x.checked});e.permissions=custom;log('Employee permissions updated',`${e.name}: ${Object.keys(custom).length} overrides`);save();closeModal();renderPage();toast('Employee permissions saved.')}}])}
 
 // Improved private employee view.
-renderMyPerformance=function(){const u=currentUser(),who=u.role==='csa'?u:state.employees.find(e=>e.role==='csa'&&e.active!==false);if(!who)return '<div class="card section-card"><div class="empty">No employees have been imported yet. Import an Excel file to load performance data.</div></div>';const dates=state.reports.filter(r=>['finalized','disputed'].includes(r.status)).sort((a,b)=>b.date.localeCompare(a.date)).map(r=>r.date),scores=dates.map(d=>({d,s:dailyScore(d,who.id)})).filter(x=>x.s!=null),month=selectedDate.slice(0,7),monthScore=employeeMonthlyScore(month,who.id),comparison=anonymousTeamComparison(who.id,month),moduleAverages=Object.keys(moduleLabels).map(m=>({m,s:avg(dates.filter(d=>d.startsWith(month)).map(d=>employeeModuleScore(d,who.id,m)))})).filter(x=>x.s!=null),strong=[...moduleAverages].sort((a,b)=>b.s-a.s)[0],weak=[...moduleAverages].sort((a,b)=>a.s-b.s)[0],plans=state.actionPlans.filter(p=>p.employeeId===who.id&&!['closed'].includes(p.status)),comments=state.performanceComments.filter(c=>c.employeeId===who.id);return `<div class="kpi-grid grid"><div class="card kpi"><span class="kpi-label">Latest score</span><div class="kpi-value">${scores[0]?.s.toFixed(2)||'—'}</div><div class="kpi-sub">${scores[0]?fmtDate(scores[0].d):'No assessment'}</div></div><div class="card kpi"><span class="kpi-label">Monthly average</span><div class="kpi-value">${monthScore?.toFixed(2)||'—'}</div><div class="kpi-sub">${month}</div></div><div class="card kpi"><span class="kpi-label">Team comparison</span><div class="kpi-value" style="font-size:24px">${comparison?.band||'—'}</div><div class="kpi-sub">Team average ${comparison?.teamAvg?.toFixed(2)||'—'} · private names</div></div><div class="card kpi"><span class="kpi-label">Missed tasks</span><div class="kpi-value">${employeeMonthMissedTasks(who.id,month)}</div><div class="kpi-sub">Current month</div></div><div class="card kpi"><span class="kpi-label">Strongest section</span><div class="kpi-value" style="font-size:24px">${strong?moduleLabels[strong.m]:'—'}</div><div class="kpi-sub">${strong?.s.toFixed(2)||'Not assessed'}</div></div><div class="card kpi"><span class="kpi-label">Weakest section</span><div class="kpi-value" style="font-size:24px">${weak?moduleLabels[weak.m]:'—'}</div><div class="kpi-sub">${weak?.s.toFixed(2)||'Not assessed'}</div></div></div><div class="grid two-col" style="margin-top:16px"><div class="card section-card"><div class="section-head"><div><h2>${u.role==='csa'?'My finalized reports':'Private employee view'}</h2><p>Scores, request deadlines and acknowledgment history.</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th class="number">Daily score</th><th>Rating</th><th>Acknowledgment</th><th>Request</th></tr></thead><tbody>${scores.map(x=>{const existing=state.requests.find(r=>r.employeeId===who.id&&r.reportDate===x.d),ack=reportAck(x.d,who.id);return`<tr><td><b>${fmtDate(x.d)}</b></td><td class="number">${scoreHtml(x.s)}</td><td>${rating(x.s)}</td><td>${ack?`<span class="ack-chip">${fmtDateTime(ack.createdAt)}</span>`:(u.id===who.id?`<button class="btn small" data-ack-report="${x.d}">Acknowledge</button>`:'Pending')}</td><td>${existing?statusBadge(existing.status):(u.id===who.id?`<button class="btn small primary" data-request-date="${x.d}" ${canRequest(x.d,who.id)?'':'disabled'}>Request change</button>`:'')}</td></tr>`}).join('')||'<tr><td colspan="5" class="empty">No finalized scores.</td></tr>'}</tbody></table></div></div><div><div class="card section-card"><div class="section-head"><div><h2>My action plans</h2><p>Targets and required improvements.</p></div></div>${plans.length?plans.map(p=>`<div class="management-note"><b>${esc(p.issue)}</b><p>${esc(p.action)}</p><div class="muted">Target ${Number(p.targetScore).toFixed(2)} · Due ${fmtDate(p.dueDate)} · ${esc(p.status)}</div></div>`).join(''):'<div class="empty">No active action plans.</div>'}</div><div class="card section-card" style="margin-top:16px"><div class="section-head"><div><h2>Feedback</h2><p>Management observations and required actions.</p></div></div>${comments.length?comments.map(c=>`<div class="management-note"><b>${esc(c.period)}</b><p>${esc(c.comment)}</p><div class="muted">${fmtDateTime(c.createdAt)} · ${c.acknowledgedAt?'Acknowledged':'Pending acknowledgment'}</div>${!c.acknowledgedAt&&u.id===who.id?`<button class="btn small primary" data-ack-comment="${c.id}">Acknowledge</button>`:''}</div>`).join(''):'<div class="empty">No feedback notes.</div>'}</div></div></div>`}
+renderMyPerformance=function(){const u=currentUser(),who=u.role==='csa'?u:state.employees.find(e=>e.role==='csa'&&e.active!==false);if(!who)return '<div class="card section-card"><div class="empty">No employees have been imported yet. Import an Excel file to load performance data.</div></div>';const dates=(window.gcDatesWithData?window.gcDatesWithData(who.id):state.reports.filter(r=>['finalized','disputed'].includes(r.status)).sort((a,b)=>b.date.localeCompare(a.date)).map(r=>r.date)),scores=dates.map(d=>({d,s:dailyScore(d,who.id)})).filter(x=>x.s!=null),month=selectedDate.slice(0,7),monthScore=employeeMonthlyScore(month,who.id),comparison=anonymousTeamComparison(who.id,month),moduleAverages=Object.keys(moduleLabels).map(m=>({m,s:avg(dates.filter(d=>d.startsWith(month)).map(d=>employeeModuleScore(d,who.id,m)))})).filter(x=>x.s!=null),strong=[...moduleAverages].sort((a,b)=>b.s-a.s)[0],weak=[...moduleAverages].sort((a,b)=>a.s-b.s)[0],plans=state.actionPlans.filter(p=>p.employeeId===who.id&&!['closed'].includes(p.status)),comments=state.performanceComments.filter(c=>c.employeeId===who.id);return `<div class="kpi-grid grid"><div class="card kpi"><span class="kpi-label">Latest score</span><div class="kpi-value">${scores[0]?.s.toFixed(2)||'—'}</div><div class="kpi-sub">${scores[0]?fmtDate(scores[0].d):'No assessment'}</div></div><div class="card kpi"><span class="kpi-label">Monthly average</span><div class="kpi-value">${monthScore?.toFixed(2)||'—'}</div><div class="kpi-sub">${month}</div></div><div class="card kpi"><span class="kpi-label">Team comparison</span><div class="kpi-value" style="font-size:24px">${comparison?.band||'—'}</div><div class="kpi-sub">Team average ${comparison?.teamAvg?.toFixed(2)||'—'} · private names</div></div><div class="card kpi"><span class="kpi-label">Missed tasks</span><div class="kpi-value">${employeeMonthMissedTasks(who.id,month)}</div><div class="kpi-sub">Current month</div></div><div class="card kpi"><span class="kpi-label">Strongest section</span><div class="kpi-value" style="font-size:24px">${strong?moduleLabels[strong.m]:'—'}</div><div class="kpi-sub">${strong?.s.toFixed(2)||'Not assessed'}</div></div><div class="card kpi"><span class="kpi-label">Weakest section</span><div class="kpi-value" style="font-size:24px">${weak?moduleLabels[weak.m]:'—'}</div><div class="kpi-sub">${weak?.s.toFixed(2)||'Not assessed'}</div></div></div><div class="grid two-col" style="margin-top:16px"><div class="card section-card"><div class="section-head"><div><h2>${u.role==='csa'?'My finalized reports':'Private employee view'}</h2><p>Scores, request deadlines and acknowledgment history.</p></div></div><div class="table-wrap"><table class="table"><thead><tr><th>Date</th><th class="number">Daily score</th><th>Rating</th><th>Acknowledgment</th><th>Request</th></tr></thead><tbody>${scores.map(x=>{const existing=state.requests.find(r=>r.employeeId===who.id&&r.reportDate===x.d),ack=reportAck(x.d,who.id);return`<tr><td><b>${fmtDate(x.d)}</b></td><td class="number">${scoreHtml(x.s)}</td><td>${rating(x.s)}</td><td>${ack?`<span class="ack-chip">${fmtDateTime(ack.createdAt)}</span>`:(u.id===who.id?`<button class="btn small" data-ack-report="${x.d}">Acknowledge</button>`:'Pending')}</td><td>${existing?statusBadge(existing.status):(u.id===who.id?`<button class="btn small primary" data-request-date="${x.d}" ${canRequest(x.d,who.id)?'':'disabled'}>Request change</button>`:'')}</td></tr>`}).join('')||'<tr><td colspan="5" class="empty">No finalized scores.</td></tr>'}</tbody></table></div></div><div><div class="card section-card"><div class="section-head"><div><h2>My action plans</h2><p>Targets and required improvements.</p></div></div>${plans.length?plans.map(p=>`<div class="management-note"><b>${esc(p.issue)}</b><p>${esc(p.action)}</p><div class="muted">Target ${Number(p.targetScore).toFixed(2)} · Due ${fmtDate(p.dueDate)} · ${esc(p.status)}</div></div>`).join(''):'<div class="empty">No active action plans.</div>'}</div><div class="card section-card" style="margin-top:16px"><div class="section-head"><div><h2>Feedback</h2><p>Management observations and required actions.</p></div></div>${comments.length?comments.map(c=>`<div class="management-note"><b>${esc(c.period)}</b><p>${esc(c.comment)}</p><div class="muted">${fmtDateTime(c.createdAt)} · ${c.acknowledgedAt?'Acknowledged':'Pending acknowledgment'}</div>${!c.acknowledgedAt&&u.id===who.id?`<button class="btn small primary" data-ack-comment="${c.id}">Acknowledge</button>`:''}</div>`).join(''):'<div class="empty">No feedback notes.</div>'}</div></div></div>`}
 
 // Daily report fields: Excel import, validation and root cause.
 const v5RenderDaily=renderDaily;
@@ -3634,9 +3634,12 @@ function monthCell(v){return '<td class="number">'+(v==null?'<span class="muted"
 /* Assessed days only — reads state.reports directly so rendering the
    page never creates report rows for empty dates. */
 function assessedDates(prefix){
- return state.reports
-  .filter(r=>r.date&&r.date.indexOf(prefix)===0&&['finalized','disputed'].includes(r.status))
-  .map(r=>r.date);
+ const all=new Set();
+ (state.records||[]).forEach(r=>{if(r.date&&r.date.indexOf(prefix)===0)all.add(r.date)});
+ state.reports.forEach(r=>{
+  if(r.date&&r.date.indexOf(prefix)===0&&['finalized','disputed'].includes(r.status))all.add(r.date);
+ });
+ return [...all];
 }
 
 function employeeYear(employee,year){
@@ -5741,6 +5744,7 @@ function markAlertRead(id){
 /* ---------- 2. opening an alert ------------------------------------ */
 
 let returnToAlerts=false;
+window.gcMarkReturn=v=>{returnToAlerts=!!v};
 
 /* Resolves the link to a real record before navigating, so a stale
    alert reports the problem instead of opening someone else's row. */
@@ -5943,7 +5947,7 @@ function openAlertById(id){
  const a=automaticAlerts().find(x=>x.id===id);
  if(!a){toast('This alert is no longer active.');return}
  markAlertRead(a.id);
- if(a.link)openTarget(a.link,{fromAlerts:true,field:a.field});
+ if(a.link)(window.gcOpenTargetHere||openTarget)(a.link,{fromAlerts:true,field:a.field});
  else if(a.page){currentPage=a.page;renderNav();renderPage()}
  else toast('This alert is not linked to a record.');
 }
@@ -5965,7 +5969,7 @@ showNotifications=function(){
    const n=(state.notifications||[]).find(x=>x.id===b.dataset.notif);
    if(!n)return;
    n.read=true;save();
-   if(n.link)openTarget(n.link,{fromAlerts:false});
+   if(n.link)(window.gcOpenTargetHere||openTarget)(n.link,{fromAlerts:false});
    else{closeModal();renderPage()}
   };
  });
@@ -6512,6 +6516,218 @@ if(typeof ARABIC_TEXT==='object'&&ARABIC_TEXT){
 }
 
 try{document.title='Golden Cube Performance Portal v14'}catch(e){}
+
+})();
+</script>
+<script id="gc-v15-assessed-js">
+/* A day is worth reporting on when it holds records, not only after it
+   has been finalized. Imported days arrive in draft, so the old
+   finalized-only test hid every imported figure from the weekly,
+   monthly and yearly reports. */
+(function(){
+'use strict';
+let index=null,stamp=null;
+function rebuild(){
+ index=new Set();
+ (state.records||[]).forEach(r=>{if(r.date)index.add(r.date)});
+ (state.reports||[]).forEach(r=>{
+  if(['finalized','disputed'].indexOf(r.status)>=0)index.add(r.date);
+ });
+ stamp=(state.records||[]).length+'|'+(state.reports||[]).length;
+}
+function isAssessed(date){
+ const now=(state.records||[]).length+'|'+(state.reports||[]).length;
+ if(index===null||stamp!==now)rebuild();
+ return index.has(date);
+}
+window.gcIsAssessed=isAssessed;
+})();
+</script>
+<script id="gc-v15-js">
+/* ===================================================================
+   Golden Cube v15 — four fixes reported from real use
+   1. Operational headings were becoming employees on the performance
+      import, not just the directory import.
+   2. A CSA could see other people's rows in the record table under
+      their own cards.
+   3. Dashboard and My Performance ignored days that were not finalized,
+      so imported data and approved corrections never appeared.
+   4. Opening an alert jumped to Daily Reports instead of showing the
+      record where you already were.
+   =================================================================== */
+(function(){
+'use strict';
+
+function words(s){return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9؀-ۿ]+/g,' ').replace(/\s+/g,' ').trim()}
+
+/* ---------- 1. an operational heading is not a person -------------- */
+
+/* Real report files put section headings, totals and tracking labels in
+   the same column as the names. Anything matching those is a heading,
+   not somebody to score. */
+const NOT_A_PERSON=[
+ 'urgent operational issues','walk in client sla tracking','walkin client sla tracking',
+ 'zoho chat tracking','processed by','daily report','weekly report','monthly report',
+ 'yearly report','total','totals','average','averages','avg','summary','grand total',
+ 'overall','remarks','remark','notes','note','comments','sub total','subtotal','count',
+ 'employee name','staff name','agent name','operator','full name','name','employee',
+ 'n a','na','none','null','nil'
+];
+
+function isPersonName(raw){
+ const value=String(raw==null?'':raw).trim();
+ if(!value)return false;
+ const n=words(value);
+ if(!n)return false;
+ if(NOT_A_PERSON.indexOf(n)>=0)return false;
+ /* department and report-category names live in the same column too */
+ if(Object.values(moduleLabels).some(v=>words(v)===n))return false;
+ if(Object.keys(moduleLabels).some(v=>words(v)===n))return false;
+ if(state.employees.some(e=>e.department&&words(e.department)===n))return false;
+ /* headings read like activities, people do not */
+ if(/\b(report|reports|tracking|issues?|summary|sla|processed by|walk in|walkin|urgent|template|instructions?|section|category|total|average)\b/.test(n))return false;
+ if(/^[=+\-@]/.test(value))return false;          /* formula or instruction */
+ if(!/[a-z؀-ۿ]/i.test(value))return false;        /* no letters at all */
+ if(/^\d/.test(value))return false;
+ if(value.length<2||value.length>60)return false;
+ if(/[<>{}|\\^~`]/.test(value))return false;
+ return true;
+}
+window.gcIsPersonName=isPersonName;
+
+/* The guard sits in the resolver, so both the performance import and the
+   employee list go through it. */
+const baseResolve=window.gcResolveEmployee;
+window.gcResolveEmployee=function(info){
+ const name=info&&info.name!=null?String(info.name).trim():'';
+ if(name&&!isPersonName(name))return null;
+ /* an ID-only row whose name cell held a heading is a summary line */
+ if(!name&&info&&info.employeeId&&!isPersonName(String(info.employeeId)))return null;
+ return baseResolve.call(this,info);
+};
+
+/* Existing installs may already carry headings as employees; clear them
+   out once, together with any records attached to them. */
+function purgeNonPeople(){
+ if(state.peoplePurged)return false;
+ const bad=state.employees.filter(e=>e.role==='csa'&&!isPersonName(e.name));
+ if(bad.length){
+  const ids=new Set(bad.map(e=>e.id));
+  state.employees=state.employees.filter(e=>!ids.has(e.id));
+  state.records=(state.records||[]).filter(r=>!ids.has(r.employeeId));
+  state.importedDailyScores=(state.importedDailyScores||[]).filter(r=>!ids.has(r.employeeId));
+  state.importedMonthlyScores=(state.importedMonthlyScores||[]).filter(r=>!ids.has(r.employeeId));
+ }
+ state.peoplePurged=true;
+ save();
+ return bad.length>0;
+}
+if(purgeNonPeople()){
+ try{
+  const app=document.getElementById('app');
+  if(app&&!app.classList.contains('hidden')&&currentUser()){renderShell();renderPage()}
+ }catch(e){}
+}
+
+/* ---------- 2. a CSA only sees their own rows ---------------------- */
+
+/* The employee cards were already filtered, but the record table and the
+   section-score table underneath them read every record for the day.
+   Scoping recordsFor for the duration of the render fixes both at once
+   without touching how scores are calculated anywhere else. */
+function withOwnRecordsOnly(render){
+ return function(){
+  const u=currentUser();
+  if(!u||u.role!=='csa')return render.apply(this,arguments);
+  const all=recordsFor;
+  recordsFor=function(date,module,employeeId){
+   return all(date,module,employeeId).filter(r=>r.employeeId===u.id);
+  };
+  try{return render.apply(this,arguments)}
+  finally{recordsFor=all}
+ };
+}
+renderDaily=withOwnRecordsOnly(renderDaily);
+
+/* ---------- 3. reports follow the data, not the finalize flag ------ */
+
+/* Imported days stay in draft until somebody finalizes them. Dashboard
+   and My Performance only looked at finalized days, so imported figures
+   and approved corrections never showed up. A day that has records is a
+   day worth reporting on. */
+function datesWithData(employeeId){
+ const set=new Set();
+ (state.records||[]).forEach(r=>{
+  if(!r.date)return;
+  if(employeeId&&r.employeeId!==employeeId)return;
+  set.add(r.date);
+ });
+ (state.reports||[]).forEach(r=>{
+  if(['finalized','disputed'].indexOf(r.status)>=0)set.add(r.date);
+ });
+ return [...set].sort((a,b)=>b.localeCompare(a));
+}
+window.gcDatesWithData=datesWithData;
+
+dashboardDate=function(){
+ const dates=datesWithData();
+ return dates[0]||selectedDate;
+};
+latestFinalizedDate=function(){
+ const dates=datesWithData();
+ return dates[0]||selectedDate;
+};
+
+/* finalizedTrendDates feeds the dashboard trend chart */
+const baseTrendDates=finalizedTrendDates;
+finalizedTrendDates=function(limit){
+ const n=limit||7;
+ const dates=datesWithData().slice(0,n).reverse();
+ return dates.length?dates:baseTrendDates.apply(this,arguments);
+};
+
+/* ---------- 4. an alert opens the record where you are ------------- */
+
+/* Previously this switched to Daily Reports behind the modal. The record
+   is shown in place instead; Back to Alerts simply closes it. */
+const baseOpenTarget=window.gcOpenRecordTarget;
+
+function openHere(link,opts){
+ const options=opts||{};
+ if(link&&link.type==='request'&&link.requestId){
+  const req=(state.requests||[]).find(r=>r.id===link.requestId);
+  if(!req){toast('The linked score change request could no longer be found.');return}
+  window.gcMarkReturn(!!options.fromAlerts);
+  window.gcOpenRequest(req.id);
+  return;
+ }
+ const rec=link&&link.recordId?window.gcRecordById(link.recordId):null;
+ if(!rec){
+  modal('Record not available',
+   '<div class="validation-box"><div class="validation-row validation-warning">'+
+   '<span class="validation-icon">!</span><div><b>The linked performance record was not found.</b>'+
+   '<div class="muted">It may have been removed by a later import. Record ID: '+
+   esc((link&&link.recordId)||'Not provided')+'</div></div></div></div>',
+   [{label:'Close',class:'btn',close:true}]);
+  return;
+ }
+ const u=currentUser();
+ if(u.role==='csa'&&rec.employeeId!==u.id){toast('You can only open your own records.');return}
+ if(!emp(rec.employeeId)){toast('The employee for this record is no longer on file.');return}
+
+ window.gcMarkReturn(!!options.fromAlerts);
+ selectedDate=rec.date;
+ /* keep the daily page in step when that is where we already are, but
+    never navigate away from wherever the alert was clicked */
+ if(currentPage==='daily')renderPage();
+ window.openEmployeeReview(rec.employeeId,{
+  recordId:rec.recordId,
+  field:options.field||(link&&link.field)||null,
+  requestId:(link&&link.requestId)||null
+ });
+}
+window.gcOpenRecordTarget=link=>openHere(link,{});
+window.gcOpenTargetHere=openHere;
 
 })();
 </script>
