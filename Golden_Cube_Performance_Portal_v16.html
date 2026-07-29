@@ -6731,5 +6731,168 @@ window.gcOpenTargetHere=openHere;
 
 })();
 </script>
+<style id="gc-v16-css">
+#notifyBtn{position:relative}
+#notifyBtn.gc-has-unread:after{content:attr(data-unread);position:absolute;top:-4px;inset-inline-end:-4px;
+  min-width:16px;height:16px;padding:0 4px;border-radius:999px;background:var(--red);color:#fff;
+  font-size:10px;font-weight:800;line-height:16px;text-align:center;box-shadow:0 0 0 2px var(--card)}
+</style>
+<script id="gc-v16-js">
+/* ===================================================================
+   Golden Cube v16 — the notification bell
+   The bell was wired at start-up to whatever showNotifications was at
+   that moment, so every later improvement to it was ignored and the
+   list stayed unclickable. Bindings are now late so the current version
+   always runs, and notifications saved by earlier versions get a link
+   so they open something too.
+   =================================================================== */
+(function(){
+'use strict';
+
+/* ---------- 1. bind late, not once at start-up --------------------- */
+
+function rebind(){
+ const wire=(id,fn)=>{const el=document.getElementById(id);if(el)el.onclick=fn};
+ wire('notifyBtn',()=>showNotifications());
+ wire('langBtn',()=>toggleLanguage());
+ wire('logoutBtn',()=>logout());
+ wire('exportBtn',()=>exportData());
+ wire('pdfBtn',()=>exportCurrentPagePdf());
+}
+rebind();
+if(typeof renderShell==='function'){
+ const base=renderShell;
+ renderShell=function(){const r=base.apply(this,arguments);rebind();return r};
+}
+document.addEventListener('DOMContentLoaded',rebind);
+
+/* ---------- 2. give older notifications something to open ---------- */
+
+/* Notifications saved before links existed carry only text. Match them
+   back to a request or a record so clicking them still lands somewhere. */
+function backfill(){
+ let changed=0;
+ (state.notifications||[]).forEach(n=>{
+  if(n.link)return;
+  const message=String(n.message||'');
+  const named=state.employees.find(e=>e.name&&message.indexOf(e.name)>=0);
+  if(!named)return;
+  const requests=(state.requests||[])
+   .filter(r=>r.employeeId===named.id)
+   .sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)));
+  if(requests.length){
+   const r=requests[0];
+   n.link={type:'request',requestId:r.id,recordId:r.recordId,employeeId:r.employeeId,
+           employeeName:named.name,date:r.reportDate,module:r.module};
+   changed++;
+   return;
+  }
+  const rec=(state.records||[])
+   .filter(r=>r.employeeId===named.id&&r.recordId)
+   .sort((a,b)=>String(b.date).localeCompare(String(a.date)))[0];
+  if(rec){
+   n.link={type:'record',recordId:rec.recordId,employeeId:rec.employeeId,
+           employeeName:named.name,date:rec.date,module:rec.module};
+   changed++;
+  }
+ });
+ if(changed)save();
+ return changed;
+}
+backfill();
+window.gcBackfillNotificationLinks=backfill;
+
+/* Anything created from now on is matched as it arrives. */
+if(typeof addNotification==='function'){
+ const baseAdd=addNotification;
+ addNotification=function(){
+  const r=baseAdd.apply(this,arguments);
+  backfill();
+  return r;
+ };
+}
+
+/* ---------- 3. the list itself ------------------------------------- */
+
+const NO_TARGET='This notification has no record to open.';
+
+showNotifications=function(){
+ const u=currentUser();
+ if(!u)return;
+ backfill();
+ const list=(state.notifications||[]).filter(n=>n.userId===u.id);
+ const unread=list.filter(n=>!n.read).length;
+ const body=list.length
+  ?'<div class="role-note">'+(unread?unread+' unread · ':'')+
+    'Select a notification to open the record it refers to.</div>'+
+   list.map(n=>
+    '<button type="button" class="gc-notif'+(n.read?'':' gc-unread')+'" data-notif="'+esc(n.id)+'">'+
+     '<div><b>'+esc(n.title)+'</b><p>'+esc(n.message)+'</p>'+
+     '<small>'+esc(fmtDateTime(n.createdAt))+' · '+
+      esc(n.link?'Opens the linked record':'No linked record')+'</small></div></button>').join('')
+  :'<div class="empty">No notifications.</div>';
+
+ modal('Notifications',body,[{label:'Close',class:'btn',close:true}]);
+
+ document.querySelectorAll('[data-notif]').forEach(btn=>{
+  btn.onclick=()=>{
+   const n=(state.notifications||[]).find(x=>x.id===btn.dataset.notif);
+   if(!n)return;
+   n.read=true;save();paintBell();
+   if(n.link&&window.gcOpenTargetHere){
+    window.gcOpenTargetHere(n.link,{fromAlerts:false});
+    return;
+   }
+   /* nothing to open: say so rather than closing silently */
+   toast(NO_TARGET);
+   btn.classList.remove('gc-unread');
+   const note=btn.querySelector('small');
+   if(note)note.textContent=fmtDateTime(n.createdAt)+' · '+NO_TARGET;
+  };
+ });
+ applyLanguage(document.getElementById('modalRoot'));
+};
+
+/* ---------- 4. an unread count on the bell ------------------------- */
+
+function paintBell(){
+ const btn=document.getElementById('notifyBtn');
+ const u=typeof currentUser==='function'?currentUser():null;
+ if(!btn||!u)return;
+ const unread=(state.notifications||[]).filter(n=>n.userId===u.id&&!n.read).length;
+ btn.classList.toggle('gc-has-unread',unread>0);
+ btn.setAttribute('data-unread',unread>99?'99+':String(unread));
+ btn.title=unread?unread+' unread notifications':'Notifications';
+}
+if(typeof renderPage==='function'){
+ const base=renderPage;
+ renderPage=function(){const r=base.apply(this,arguments);paintBell();return r};
+}
+if(typeof renderShell==='function'){
+ const base=renderShell;
+ renderShell=function(){const r=base.apply(this,arguments);paintBell();return r};
+}
+paintBell();
+/* closing the list must refresh the badge too, or it looks stale */
+if(typeof closeModal==='function'){
+ const baseClose=closeModal;
+ closeModal=function(){const r=baseClose.apply(this,arguments);paintBell();return r};
+}
+
+const AR={
+ 'Select a notification to open the record it refers to.':'اختر إشعاراً لفتح السجل الذي يشير إليه.',
+ 'No linked record':'لا يوجد سجل مرتبط',
+ 'This notification has no record to open.':'لا يوجد سجل لفتحه من هذا الإشعار.',
+ 'Notifications':'الإشعارات','No notifications.':'لا توجد إشعارات.',
+ 'unread':'غير مقروء'
+};
+if(typeof ARABIC_TEXT==='object'&&ARABIC_TEXT){
+ Object.keys(AR).forEach(k=>{if(!ARABIC_TEXT[k])ARABIC_TEXT[k]=AR[k]});
+ if(typeof ENGLISH_TEXT==='object'&&ENGLISH_TEXT){
+  Object.keys(AR).forEach(k=>{if(!ENGLISH_TEXT[AR[k]])ENGLISH_TEXT[AR[k]]=k});
+ }
+}
+})();
+</script>
 </body>
 </html>
