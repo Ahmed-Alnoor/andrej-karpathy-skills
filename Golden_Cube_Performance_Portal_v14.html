@@ -497,7 +497,7 @@ function openImportRecords(){modal('Import report data',`<div class="form-grid">
 function importCsvData(){const text=val('csvPaste').trim();if(!text){toast('Choose a CSV file or paste CSV data.');return}const rows=parseCsv(text);if(rows.length<2){toast('The CSV must include a header and at least one data row.');return}const headers=rows[0].map(h=>h.trim().toLowerCase().replaceAll(' ','_'));const needed=['date','module','employee_email','reference','start','end'];const missing=needed.filter(x=>!headers.includes(x));if(missing.length){toast('Missing columns: '+missing.join(', '));return}let added=0;const errors=[];for(let i=1;i<rows.length;i++){const obj={};headers.forEach((h,j)=>obj[h]=rows[i][j]??'');const module=(obj.module||selectedModule).toLowerCase();const employee=state.employees.find(e=>e.email.toLowerCase()===String(obj.employee_email).toLowerCase()||e.name.toLowerCase()===String(obj.employee_email).toLowerCase());if(!employee){errors.push(`Row ${i+1}: employee not found`);continue}if(!moduleLabels[module]){errors.push(`Row ${i+1}: invalid module`);continue}const date=obj.date||selectedDate;if(report(date).status!=='draft'){errors.push(`Row ${i+1}: ${date} is finalized`);continue}const yes=v=>['yes','y','true','1'].includes(String(v).trim().toLowerCase());state.records.push({id:'r'+Date.now()+i,date,module,employeeId:employee.id,reference:obj.reference,start:obj.start,end:obj.end,firstResponse:module==='zoho'?(obj.first_response||''):'',missed:yes(obj.missed),missedTasks:obj.missed_tasks!==undefined&&obj.missed_tasks!==''?Math.max(0,Math.floor(Number(obj.missed_tasks)||0)):(obj.task_completed===''||obj.task_completed===undefined?0:(yes(obj.task_completed)?0:1)),taskCompleted:obj.missed_tasks!==undefined&&obj.missed_tasks!==''?Number(obj.missed_tasks)===0:(obj.task_completed===''||obj.task_completed===undefined?true:yes(obj.task_completed)),auditScore:Number(obj.audit_score||5),remarks:obj.remarks||'',rootCause:obj.root_cause||inferRootCause(obj.remarks),status:obj.status||((yes(obj.missed))?'missed':(obj.end?'completed':'pending')),source:'csv'});state.records.at(-1).missed=state.records.at(-1).status==='missed';added++}if(!added){toast(errors[0]||'No records were imported.');return}log('CSV data imported',`${added} records added${errors.length?`; ${errors.length} skipped`:''}`);save();closeModal();renderPage();toast(`${added} records imported. Duration and SLA calculated automatically.${errors.length?' '+errors.length+' rows skipped.':''}`)}
 
 function finalizeReport(){const r=report(selectedDate);if(!recordsFor(selectedDate).length){toast('Add at least one record before finalizing.');return}if(!confirm(`Finalize ${fmtDate(selectedDate)}? Editing will be locked.`))return;r.status='finalized';r.finalizedAt=new Date().toISOString();r.finalizedBy=currentUser().id;state.employees.filter(e=>e.role==='csa'&&dailyScore(selectedDate,e.id)!=null).forEach(e=>addNotification(e.id,'Daily report finalized',`Your ${fmtDate(selectedDate)} performance report is available. A score-change request can be submitted by ${fmtDateTime(requestDeadline(selectedDate))}.`));log('Report finalized',`${selectedDate}; request deadline ${fmtDateTime(requestDeadline(selectedDate))}`);save();renderPage();toast('Report finalized and CSA notifications queued.')}
-function openRequestForm(date){const u=currentUser(),mods=Object.keys(moduleLabels).filter(m=>employeeModuleScore(date,u.id,m)!=null);modal('Request score change',`<div class="form-grid"><div class="field"><label>Report date</label><input value="${fmtDate(date)}" disabled></div><div class="field"><label>Section</label><select id="rqModule">${mods.map(m=>`<option value="${m}">${moduleLabels[m]}</option>`).join('')}</select></div><div class="field"><label>Current score</label><input id="rqCurrent" value="${employeeModuleScore(date,u.id,mods[0]).toFixed(2)}" disabled></div><div class="field"><label>Requested score</label><input id="rqRequested" type="number" min="0" max="5" step=".05" value="5"></div><div class="field full"><label>Reason</label><select id="rqReason"><option>Incorrect response or submission time</option><option>Incorrect missed item</option><option>Task assigned to another employee</option><option>Audit score is incorrect</option><option>Approved break or system issue</option><option>Other</option></select></div><div class="field full"><label>Explanation and evidence reference</label><textarea id="rqExplanation" placeholder="Explain exactly what should be corrected. Supporting file upload is added in the production database version."></textarea></div><div class="full deadline">Initial request deadline: ${fmtDateTime(requestDeadline(date))}</div></div>`,[{label:'Cancel',class:'btn',close:true},{label:'Submit to Fitoun',class:'btn primary',action:()=>{const module=val('rqModule'),cur=employeeModuleScore(date,u.id,module),req={id:'REQ-'+Date.now(),employeeId:u.id,reportDate:date,module,currentScore:cur,requestedScore:Number(val('rqRequested')),reason:val('rqReason'),explanation:val('rqExplanation'),status:'pending_auditor_review',createdAt:new Date().toISOString(),initialDeadline:requestDeadline(date),auditorDecision:null,managerDecision:null,history:[{at:new Date().toISOString(),by:u.id,action:'Submitted to auditor'}]};state.requests.push(req);report(date).status='disputed';addNotification('fitoun','New score request',`${u.name} submitted a ${moduleLabels[module]} score request for ${fmtDate(date)}.`);log('Score request submitted',req.id);save();closeModal();renderPage();toast('Request sent to Fitoun. Email and in-app notifications queued.')}}]);document.getElementById('rqModule').onchange=e=>document.getElementById('rqCurrent').value=employeeModuleScore(date,u.id,e.target.value).toFixed(2)}
+function openRequestForm(date){const u=currentUser(),mods=Object.keys(moduleLabels).filter(m=>employeeModuleScore(date,u.id,m)!=null);modal('Request score change',`<div class="form-grid"><div class="field"><label>Report date</label><input value="${fmtDate(date)}" disabled></div><div class="field"><label>Section</label><select id="rqModule">${mods.map(m=>`<option value="${m}">${moduleLabels[m]}</option>`).join('')}</select></div><div class="field"><label>Current score</label><input id="rqCurrent" value="${employeeModuleScore(date,u.id,mods[0]).toFixed(2)}" disabled></div><div class="field"><label>Requested score</label><input id="rqRequested" type="number" min="0" max="5" step=".05" value="5"></div><div class="field full"><label>Reason</label><select id="rqReason"><option>Incorrect response or submission time</option><option>Incorrect missed item</option><option>Task assigned to another employee</option><option>Audit score is incorrect</option><option>Approved break or system issue</option><option>Other</option></select></div><div class="field full"><label>Explanation and evidence reference</label><textarea id="rqExplanation" placeholder="Explain exactly what should be corrected. Supporting file upload is added in the production database version."></textarea></div><div class="full deadline">Initial request deadline: ${fmtDateTime(requestDeadline(date))}</div></div>`,[{label:'Cancel',class:'btn',close:true},{label:'Submit to Fitoun',class:'btn primary',action:()=>{const module=val('rqModule'),cur=employeeModuleScore(date,u.id,module),req={id:'REQ-'+Date.now(),employeeId:u.id,reportDate:date,module,currentScore:cur,requestedScore:Number(val('rqRequested')),reason:val('rqReason'),explanation:val('rqExplanation'),status:'pending_auditor_review',createdAt:new Date().toISOString(),initialDeadline:requestDeadline(date),auditorDecision:null,managerDecision:null,history:[{at:new Date().toISOString(),by:u.id,action:'Submitted to auditor'}]};state.requests.push(req);report(date).status='disputed';(window.gcNotifyRole?window.gcNotifyRole('auditor','New score request',`${u.name} submitted a ${moduleLabels[module]} score request for ${fmtDate(date)}.`):0);log('Score request submitted',req.id);save();closeModal();renderPage();toast('Request sent to Fitoun. Email and in-app notifications queued.')}}]);document.getElementById('rqModule').onchange=e=>document.getElementById('rqCurrent').value=employeeModuleScore(date,u.id,e.target.value).toFixed(2)}
 function openRequest(id){const r=state.requests.find(x=>x.id===id),u=currentUser(),e=emp(r.employeeId);let actions=[];if(u.role==='auditor'&&['pending_auditor_review','more_information_required'].includes(r.status)){actions=[{label:'Request information',class:'btn',action:()=>decisionPrompt(r,'more_info')},{label:'Reject',class:'btn danger',action:()=>decisionPrompt(r,'reject')},{label:'Partially approve',class:'btn',action:()=>decisionPrompt(r,'partial')},{label:'Approve',class:'btn success',action:()=>decisionPrompt(r,'approve')}]}else if(u.role==='csa'&&u.id===r.employeeId&&['rejected_by_auditor','partially_approved'].includes(r.status)){actions=[{label:'Accept decision',class:'btn',action:()=>acceptAuditor(r)},{label:'Escalate to Abdulaziz',class:'btn primary',action:()=>escalatePrompt(r)}]}else if(u.role==='manager'&&r.status==='pending_manager_review'){actions=[{label:'Uphold auditor decision',class:'btn danger',action:()=>managerPrompt(r,'reject')},{label:'Partially approve',class:'btn',action:()=>managerPrompt(r,'partial')},{label:'Approve request',class:'btn success',action:()=>managerPrompt(r,'approve')}]}actions.unshift({label:'Close',class:'btn',close:true});modal(`Request ${r.id.slice(-6).toUpperCase()}`,`<div class="form-grid"><div class="field"><label>Employee</label><input value="${esc(e.name)}" disabled></div><div class="field"><label>Status</label><div>${statusBadge(r.status)}</div></div><div class="field"><label>Report</label><input value="${fmtDate(r.reportDate)} · ${moduleLabels[r.module]}" disabled></div><div class="field"><label>Scores</label><input value="${Number(r.currentScore).toFixed(2)} → ${Number(r.requestedScore).toFixed(2)}" disabled></div><div class="field full"><label>Reason</label><input value="${esc(r.reason)}" disabled></div><div class="field full"><label>CSA explanation</label><textarea disabled>${esc(r.explanation)}</textarea></div>${r.auditorDecision?`<div class="field full"><label>Auditor decision</label><textarea disabled>${esc(r.auditorDecision)}</textarea></div>`:''}${r.managerDecision?`<div class="field full"><label>Manager decision</label><textarea disabled>${esc(r.managerDecision)}</textarea></div>`:''}<div class="field full"><label>History</label><div class="role-note">${r.history.map(h=>`${fmtDateTime(h.at)} — ${esc(emp(h.by)?.name||h.by)}: ${esc(h.action)}`).join('<br>')}</div></div>${r.escalationDeadline?`<div class="full deadline">Escalation deadline: ${fmtDateTime(r.escalationDeadline)}</div>`:''}</div>`,actions)}
 function applyApprovedScore(r,newScore){const rs=recordsFor(r.reportDate,r.module,r.employeeId);if(!rs.length)return;const current=avg(rs.map(recordFinal)),delta=newScore-current;rs.forEach(x=>{if(['email','zoho'].includes(x.module))x.auditScore=Math.max(0,Math.min(5,Number(x.auditScore)+delta));else{x.overrideScore=Math.max(0,Math.min(5,recordFinal(x)+delta))}})}
 // wrapper respects approved override for non-audit modules
@@ -505,7 +505,7 @@ const _recordFinal=recordFinal;
 recordFinal=function(r){if(Number.isFinite(r.overrideScore))return r.overrideScore;let base=(r.module==='email'||r.module==='zoho')?Number(r.auditScore||5):recordSla(r);const slaPenalty=(r.module==='email'||r.module==='zoho')?(5-recordSla(r)):0;const missedTasks=Math.max(0,Number(r.missedTasks)||0),taskDeduction=Number(state.settings.missedTaskDeduction??state.settings.incompleteDeduction??1);let score=base-slaPenalty-(r.missed?state.settings.missedDeduction:0)-(missedTasks*taskDeduction);return Math.max(0,Math.min(5,Math.round(score*100)/100))}
 function decisionPrompt(r,type){const titles={approve:'Approve request',partial:'Partially approve',reject:'Reject request',more_info:'Request more information'};modal(titles[type],`<div class="form-grid">${['approve','partial'].includes(type)?`<div class="field"><label>Approved score</label><input id="dScore" type="number" min="0" max="5" step=".05" value="${type==='approve'?r.requestedScore:(r.currentScore+r.requestedScore)/2}"></div>`:''}<div class="field full"><label>Decision explanation</label><textarea id="dNote" placeholder="A reason is required."></textarea></div></div>`,[{label:'Cancel',class:'btn',close:true},{label:'Save decision',class:'btn primary',action:()=>{const note=val('dNote').trim();if(!note){toast('Enter a decision explanation.');return}r.auditorDecision=note;r.auditorDecidedAt=new Date().toISOString();if(type==='approve'){r.status='approved_by_auditor';applyApprovedScore(r,Number(val('dScore')));addNotification(r.employeeId,'Score request approved',`Fitoun approved your request for ${fmtDate(r.reportDate)}.`)}else if(type==='partial'){r.status='partially_approved';r.auditorApprovedScore=Number(val('dScore'));r.escalationDeadline=workingDeadline(r.auditorDecidedAt,state.settings.escalationDays);addNotification(r.employeeId,'Request partially approved',`You may accept or escalate to Abdulaziz by ${fmtDateTime(r.escalationDeadline)}.`)}else if(type==='reject'){r.status='rejected_by_auditor';r.escalationDeadline=workingDeadline(r.auditorDecidedAt,state.settings.escalationDays);addNotification(r.employeeId,'Score request rejected',`You may escalate to Abdulaziz by ${fmtDateTime(r.escalationDeadline)}.`)}else{r.status='more_information_required';addNotification(r.employeeId,'More information required',note)}r.history.push({at:new Date().toISOString(),by:currentUser().id,action:titles[type]});log(titles[type],r.id);save();closeModal();renderPage();toast('Auditor decision saved and notification queued.')}}])}
 function acceptAuditor(r){if(r.status==='partially_approved')applyApprovedScore(r,r.auditorApprovedScore);r.status=r.status==='partially_approved'?'approved_by_auditor':'closed';r.history.push({at:new Date().toISOString(),by:currentUser().id,action:'Accepted auditor decision'});log('Auditor decision accepted',r.id);save();closeModal();renderPage();toast('Decision accepted.')}
-function escalatePrompt(r){if(new Date()>new Date(r.escalationDeadline)){toast('The escalation deadline has passed.');return}modal('Escalate to Abdulaziz',`<div class="field"><label>Reason for escalation</label><textarea id="esNote" placeholder="Explain why management should review the auditor decision."></textarea></div><div class="deadline" style="margin-top:12px">Deadline: ${fmtDateTime(r.escalationDeadline)}</div>`,[{label:'Cancel',class:'btn',close:true},{label:'Escalate',class:'btn primary',action:()=>{const note=val('esNote').trim();if(!note){toast('Enter an escalation reason.');return}r.escalationReason=note;r.status='pending_manager_review';r.history.push({at:new Date().toISOString(),by:currentUser().id,action:'Escalated to manager'});addNotification('abdulaziz','Escalated score request',`${emp(r.employeeId).name} escalated request ${r.id.slice(-6)}.`);log('Request escalated',r.id);save();closeModal();renderPage();toast('Escalated to Abdulaziz.')}}])}
+function escalatePrompt(r){if(new Date()>new Date(r.escalationDeadline)){toast('The escalation deadline has passed.');return}modal('Escalate to Abdulaziz',`<div class="field"><label>Reason for escalation</label><textarea id="esNote" placeholder="Explain why management should review the auditor decision."></textarea></div><div class="deadline" style="margin-top:12px">Deadline: ${fmtDateTime(r.escalationDeadline)}</div>`,[{label:'Cancel',class:'btn',close:true},{label:'Escalate',class:'btn primary',action:()=>{const note=val('esNote').trim();if(!note){toast('Enter an escalation reason.');return}r.escalationReason=note;r.status='pending_manager_review';r.history.push({at:new Date().toISOString(),by:currentUser().id,action:'Escalated to manager'});(window.gcNotifyRole?window.gcNotifyRole('manager','Escalated score request',`${emp(r.employeeId).name} escalated request ${r.id.slice(-6)}.`):0);log('Request escalated',r.id);save();closeModal();renderPage();toast('Escalated to Abdulaziz.')}}])}
 function managerPrompt(r,type){modal(type==='approve'?'Approve request':type==='partial'?'Partially approve':'Uphold auditor decision',`<div class="form-grid">${type!=='reject'?`<div class="field"><label>Final approved score</label><input id="mgScore" type="number" min="0" max="5" step=".05" value="${type==='approve'?r.requestedScore:(r.currentScore+r.requestedScore)/2}"></div>`:''}<div class="field full"><label>Final management explanation</label><textarea id="mgNote"></textarea></div></div>`,[{label:'Cancel',class:'btn',close:true},{label:'Save final decision',class:'btn primary',action:()=>{const note=val('mgNote').trim();if(!note){toast('Enter the final decision explanation.');return}r.managerDecision=note;r.managerDecidedAt=new Date().toISOString();if(type==='reject')r.status='rejected_by_manager';else{r.status='approved_by_manager';applyApprovedScore(r,Number(val('mgScore')))}r.history.push({at:new Date().toISOString(),by:currentUser().id,action:type==='reject'?'Auditor decision upheld':'Manager approved correction'});addNotification(r.employeeId,'Final management decision',`Abdulaziz completed the review of request ${r.id.slice(-6)}.`);log('Final management decision',r.id);save();closeModal();renderPage();toast('Final management decision saved.')}}])}
 function saveSettings(){state.settings.target=Number(val('setTarget'));state.settings.missedDeduction=Number(val('setMissed'));state.settings.missedTaskDeduction=Number(val('setMissedTask'));state.settings.incompleteDeduction=state.settings.missedTaskDeduction;state.settings.zohoResponseTarget=Number(val('setZohoResponse'));state.settings.zohoDurationTarget=Number(val('setZohoDuration'));state.settings.deadlineHour=Number(val('setDeadline'));log('Scoring settings updated','SLA and deadline settings changed');save();renderPage();toast('Settings saved and scores recalculated.')}
 function modal(title,body,actions=[]){document.getElementById('modalRoot').innerHTML=`<div class="modal-backdrop"><div class="modal"><div class="modal-head"><h3>${title}</h3><button class="close" id="modalX">×</button></div><div class="modal-body">${body}</div><div class="modal-foot">${actions.map((a,i)=>`<button class="${a.class}" data-modal-action="${i}">${a.label}</button>`).join('')}</div></div></div>`;document.getElementById('modalX').onclick=closeModal;document.querySelectorAll('[data-modal-action]').forEach(b=>{const a=actions[Number(b.dataset.modalAction)];b.onclick=()=>a.close?closeModal():a.action?.()})}
@@ -3428,6 +3428,15 @@ commitExcelImport=function(){
  const incoming=p?p.records.map(r=>r.employeeId).concat(p.scores.map(r=>r.employeeId),p.monthly.map(r=>r.employeeId)):[];
  if(p&&val('xlsxMode')==='fresh'&&window.gcClearImportedData){
   window.gcClearImportedData(incoming,p.records.map(r=>r.module));
+  /* A day that carries a dispute is locked, and the importer skips
+     locked days. Replacing that day's data has to unlock it first,
+     otherwise every row is silently dropped. */
+  const incomingDates=new Set(p.records.map(r=>r.date));
+  (state.reports||[]).forEach(rep=>{
+   if(incomingDates.has(rep.date)&&rep.status!=='draft'){
+    rep.status='draft';rep.finalizedAt=null;rep.finalizedBy=null;
+   }
+  });
   if(window.gcResetDailyFilters)window.gcResetDailyFilters();
  }
  baseCommitExcelImport.apply(this,arguments);
@@ -4481,7 +4490,7 @@ function recordSection(r,index){
  const sla=recordSla(r),final=recordFinal(r),mins=durationMinutes(r),src=r.excel;
  const calc=deductions(r);
  const late=lateSubmission(r);
- return '<details class="gc-record-block"'+(index===0?' open':'')+'>'+
+ return '<details class="gc-record-block" data-record-id="'+esc(r.recordId||r.id)+'"'+(index===0?' open':'')+'>'+
   '<summary><span>'+esc((moduleLabels[r.module]||r.module)+' · '+(r.reference||'—'))+'</span>'+
    '<span>'+esc(final==null?NOT_PROVIDED:final.toFixed(2))+'</span></summary>'+
   '<div class="gc-record-body"><div class="gc-detail-grid">'+
@@ -4515,7 +4524,7 @@ function recordSection(r,index){
     row('Source file',src?src.file:null)+
     row('Worksheet',src?src.sheet:null)+
     row('Excel row',src?('Row '+src.rowNumber):null)+
-    row('Internal record reference',r.id))+
+    row('Record ID',r.recordId||r.id))+
    block('Score calculation and deductions',calc.rows,true)+
    block('Additional details from the imported file',extraColumns(r),true)+
   '</div></div></details>';
@@ -5048,6 +5057,1462 @@ if(typeof ARABIC_TEXT==='object'&&ARABIC_TEXT){
 }
 
 try{document.title='Golden Cube Performance Portal v13'}catch(e){}
+})();
+</script>
+<script id="gc-v14-core-js">
+/* ===================================================================
+   Golden Cube v14 — part 1: durable identity
+   Records get an ID that is reproduced exactly when the same row is
+   imported again, and approved score changes live outside the records
+   so an import can never wipe them.
+   =================================================================== */
+(function(){
+'use strict';
+
+function words(s){return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9؀-ۿ]+/g,' ').replace(/\s+/g,' ').trim()}
+
+/* ---------- 1. permanent record IDs -------------------------------- */
+
+/* Derived from the row's own identity, not from insertion order, so
+   re-importing the same workbook reproduces the same ID and everything
+   attached to it (overrides, requests, alerts) stays connected. */
+function baseKey(r){
+ return [r.employeeId,r.date,r.module,words(r.reference)].join('|');
+}
+function assignRecordIds(records){
+ const seen={};
+ (records||[]).forEach(r=>{
+  const base=baseKey(r);
+  seen[base]=(seen[base]||0)+1;
+  r.recordId=seen[base]>1?(base+'#'+seen[base]):base;
+ });
+ return records;
+}
+function recordById(id){return state.records.find(r=>r.recordId===id)||null}
+window.gcAssignRecordIds=assignRecordIds;
+window.gcRecordById=recordById;
+
+/* ---------- 2. approved score overrides ---------------------------- */
+
+/* Kept in their own store, keyed by record ID. Imports rewrite
+   state.records; they never touch this. */
+function overrides(){
+ state.scoreOverrides=state.scoreOverrides||{};
+ return state.scoreOverrides;
+}
+function overrideFor(r){
+ if(!r||!r.recordId)return null;
+ const o=overrides()[r.recordId];
+ return o&&Number.isFinite(Number(o.score))?o:null;
+}
+function setOverride(r,score,meta){
+ if(!r||!r.recordId)return;
+ overrides()[r.recordId]=Object.assign({
+  score:Math.max(0,Math.min(5,Number(score))),
+  recordId:r.recordId,employeeId:r.employeeId,date:r.date,module:r.module,
+  at:new Date().toISOString()
+ },meta||{});
+}
+function clearOverride(r){if(r&&r.recordId)delete overrides()[r.recordId]}
+window.gcOverrideFor=overrideFor;
+window.gcSetOverride=setOverride;
+window.gcClearOverride=clearOverride;
+
+/* The score the portal's rules produce before any auditor correction. */
+const ruleScore=recordFinal;
+window.gcRuleScore=ruleScore;
+
+recordFinal=function(r){
+ const o=overrideFor(r);
+ if(o)return o.score;
+ return ruleScore(r);
+};
+
+/* ---------- 3. what an import may not touch ------------------------ */
+
+/* The importer replaces records and employees. Everything a person
+   decided — corrections, requests, acknowledgements, history — is
+   deliberately not in that set. */
+function protectedKeys(){
+ return ['scoreOverrides','requests','acknowledgments','scoreHistory',
+         'reviewStatus','alertReads','alertDismissals','auditLog',
+         'notifications','performanceComments','actionPlans','evidence'];
+}
+window.gcProtectedKeys=protectedKeys;
+
+function ensureStores(){
+ state.scoreOverrides=state.scoreOverrides||{};
+ state.scoreHistory=state.scoreHistory||[];
+ state.reviewStatus=state.reviewStatus||{};
+ state.alertReads=state.alertReads||[];
+ state.alertDismissals=state.alertDismissals||[];
+ state.requests=state.requests||[];
+ state.notifications=state.notifications||[];
+}
+ensureStores();
+assignRecordIds(state.records);
+save();
+
+/* Records rebuilt by an import need their IDs before anything reads
+   them, so hook the commit rather than relying on the next render. */
+const baseCommit=commitExcelImport;
+commitExcelImport=function(){
+ const r=baseCommit.apply(this,arguments);
+ ensureStores();
+ assignRecordIds(state.records);
+ save();
+ return r;
+};
+
+/* ---------- 4. people are found by role, never by name ------------- */
+
+function usersInRole(role){
+ return state.employees.filter(e=>e.role===role&&e.active!==false);
+}
+window.gcUsersInRole=usersInRole;
+
+/* A notification carries the same link payload as an alert, so opening
+   it lands on the exact record or request. */
+function notify(userId,title,message,link){
+ if(!userId)return;
+ state.notifications.unshift({
+  id:'n'+Date.now()+Math.random().toString(36).slice(2,7),
+  userId,title,message,link:link||null,
+  createdAt:new Date().toISOString(),read:false,channels:['in-app','email']
+ });
+}
+function notifyRole(role,title,message,link){
+ usersInRole(role).forEach(u=>notify(u.id,title,message,link));
+}
+window.gcNotify=notify;
+window.gcNotifyRole=notifyRole;
+
+})();
+</script>
+<script id="gc-v14-workflow-js">
+/* ===================================================================
+   Golden Cube v14 — part 2: employee review and score corrections
+   =================================================================== */
+(function(){
+'use strict';
+
+const NOT_PROVIDED='Not provided';
+function text(v){return v==null||v===''||(typeof v==='string'&&!v.trim())?null:String(v).trim()}
+function score2(v){return Number.isFinite(Number(v))?Number(v).toFixed(2):NOT_PROVIDED}
+
+/* ---------- 1. how far the employee has got with a day ------------- */
+
+const STATUS={
+ NOT_REVIEWED:'Not Reviewed',VIEWED:'Viewed',ACCEPTED:'Accepted',
+ REQUESTED:'Change Requested',UNDER_REVIEW:'Under Auditor Review',
+ APPROVED:'Approved',REJECTED:'Rejected',ESCALATED:'Escalated to Management'
+};
+function dayKey(employeeId,date){return employeeId+'|'+date}
+
+function requestsFor(employeeId,date){
+ return (state.requests||[]).filter(r=>r.employeeId===employeeId&&r.reportDate===date);
+}
+function isActive(r){
+ return ['approved_by_auditor','approved_by_manager','rejected_by_manager','closed'].indexOf(r.status)<0;
+}
+/* One live request per record and category, so an employee cannot
+   queue the same correction twice. */
+function activeRequestFor(recordId,module){
+ return (state.requests||[]).find(r=>isActive(r)&&r.recordId===recordId&&r.module===module)||null;
+}
+window.gcActiveRequestFor=activeRequestFor;
+
+function requestStatusLabel(r){
+ switch(r.status){
+  case 'pending_auditor_review':return r.openedByAuditorAt?STATUS.UNDER_REVIEW:STATUS.REQUESTED;
+  case 'under_auditor_review':
+  case 'more_information_required':return STATUS.UNDER_REVIEW;
+  case 'pending_manager_review':return STATUS.ESCALATED;
+  case 'approved_by_auditor':
+  case 'approved_by_manager':
+  case 'partially_approved':return STATUS.APPROVED;
+  case 'rejected_by_auditor':
+  case 'rejected_by_manager':return STATUS.REJECTED;
+  case 'closed':return STATUS.ACCEPTED;
+  default:return STATUS.UNDER_REVIEW;
+ }
+}
+
+/* A live correction outranks a plain "viewed"/"accepted" mark. */
+function reviewState(employeeId,date){
+ const stored=(state.reviewStatus||{})[dayKey(employeeId,date)]||{};
+ const rs=requestsFor(employeeId,date);
+ const live=rs.filter(isActive).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+ const decided=rs.filter(r=>!isActive(r)).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt)))[0];
+ let status=STATUS.NOT_REVIEWED;
+ if(live)status=requestStatusLabel(live);
+ else if(decided)status=requestStatusLabel(decided);
+ else if(stored.acceptedAt)status=STATUS.ACCEPTED;
+ else if(stored.firstViewedAt)status=STATUS.VIEWED;
+ return {status,firstViewedAt:stored.firstViewedAt||null,acceptedAt:stored.acceptedAt||null,
+         request:live||decided||null,requests:rs};
+}
+window.gcReviewState=reviewState;
+
+/* Stamped the first time the employee opens their own result. */
+function markViewed(employeeId,date){
+ const u=currentUser();
+ if(!u||u.id!==employeeId)return;
+ state.reviewStatus=state.reviewStatus||{};
+ const key=dayKey(employeeId,date);
+ const cur=state.reviewStatus[key]||{};
+ if(cur.firstViewedAt)return;
+ cur.firstViewedAt=new Date().toISOString();
+ state.reviewStatus[key]=cur;
+ save();
+}
+window.gcMarkViewed=markViewed;
+
+function acceptDay(employeeId,date){
+ state.reviewStatus=state.reviewStatus||{};
+ const key=dayKey(employeeId,date);
+ const cur=state.reviewStatus[key]||{};
+ cur.acceptedAt=new Date().toISOString();
+ cur.acceptedBy=currentUser().id;
+ state.reviewStatus[key]=cur;
+ log('Daily result accepted',emp(employeeId).name+' accepted '+date);
+ save();
+}
+window.gcAcceptDay=acceptDay;
+
+/* ---------- 2. audit trail ----------------------------------------- */
+
+/* Never rewrites an earlier entry: the original score stays readable
+   however many corrections follow. */
+function addHistory(entry){
+ state.scoreHistory=state.scoreHistory||[];
+ state.scoreHistory.unshift(Object.assign({
+  id:'h'+Date.now()+Math.random().toString(36).slice(2,6),
+  at:new Date().toISOString()
+ },entry));
+}
+window.gcAddHistory=addHistory;
+
+function historyFor(recordId){
+ return (state.scoreHistory||[]).filter(h=>h.recordId===recordId);
+}
+window.gcHistoryFor=historyFor;
+
+/* ---------- 3. the employee's request ------------------------------ */
+
+function openScoreRequest(recordId){
+ const rec=window.gcRecordById(recordId);
+ const u=currentUser();
+ if(!rec){toast('That performance record could no longer be found.');return}
+ if(u.role==='csa'&&rec.employeeId!==u.id){toast('You can only request changes to your own records.');return}
+ const existing=activeRequestFor(rec.recordId,rec.module);
+ if(existing){
+  toast('A score change is already being reviewed for this record.');
+  openRequest(existing.id);
+  return;
+ }
+ const e=emp(rec.employeeId)||{};
+ const current=recordFinal(rec);
+
+ modal('Request a score change',
+  '<div class="form-grid">'+
+   '<div class="field"><label>Employee name</label><input value="'+esc(e.name||'')+'" disabled></div>'+
+   '<div class="field"><label>Report date</label><input value="'+esc(fmtDate(rec.date))+'" disabled></div>'+
+   '<div class="field"><label>Performance category</label><input value="'+esc(moduleLabels[rec.module]||rec.module)+'" disabled></div>'+
+   '<div class="field"><label>Current score</label><input value="'+esc(score2(current))+'" disabled></div>'+
+   '<div class="field"><label>Requested score</label>'+
+     '<input id="scrRequested" type="number" min="0" max="5" step="0.05" value="'+(current==null?'5':Math.min(5,current+0.5).toFixed(2))+'"></div>'+
+   '<div class="field"><label>Related record ID</label><input value="'+esc(rec.recordId)+'" disabled></div>'+
+   '<div class="field full"><label>Reason for the request</label>'+
+     '<select id="scrReason"><option value="">Select a reason</option>'+
+     ['Incorrect response or submission time','Incorrect missed item or task',
+      'Task was assigned to another employee','Audit score is incorrect',
+      'Approved break or system issue','Supporting evidence was not considered','Other']
+      .map(x=>'<option>'+esc(x)+'</option>').join('')+'</select></div>'+
+   '<div class="field full"><label>Supporting comments</label>'+
+     '<textarea id="scrComments" placeholder="Explain exactly what should be corrected."></textarea></div>'+
+   '<div class="field full"><label>Supporting document or screenshot</label>'+
+     '<input id="scrFile" type="file" accept="image/*,.pdf,.doc,.docx,.xlsx,.csv">'+
+     '<small class="muted">Optional. The file is stored inside this portal file.</small></div>'+
+  '</div>',
+  [{label:'Cancel',class:'btn',close:true},
+   {label:'Submit request',class:'btn primary',action:()=>submitScoreRequest(rec)}]);
+ applyLanguage(document.getElementById('modalRoot'));
+}
+window.gcOpenScoreRequest=openScoreRequest;
+
+async function submitScoreRequest(rec){
+ const reason=val('scrReason').trim();
+ if(!reason){toast('Select a reason before submitting the request.');return}
+ const requested=Number(val('scrRequested'));
+ if(!Number.isFinite(requested)||requested<0||requested>5){toast('Enter a requested score between 0.00 and 5.00.');return}
+ if(activeRequestFor(rec.recordId,rec.module)){toast('A score change is already being reviewed for this record.');return}
+
+ const u=currentUser(),current=recordFinal(rec);
+ let attachment=null;
+ const input=document.getElementById('scrFile'),file=input&&input.files&&input.files[0];
+ if(file){
+  try{attachment={name:file.name,type:file.type,size:file.size,dataUrl:await fileDataUrl(file)}}
+  catch(err){toast('The supporting file could not be read.');return}
+ }
+
+ const req={
+  id:'REQ-'+Date.now().toString(36).toUpperCase(),
+  recordId:rec.recordId,
+  employeeId:rec.employeeId,
+  reportDate:rec.date,
+  module:rec.module,
+  currentScore:current,
+  originalScore:window.gcRuleScore(rec),
+  requestedScore:requested,
+  reason,
+  explanation:val('scrComments').trim(),
+  comments:val('scrComments').trim(),
+  attachment,
+  status:'pending_auditor_review',
+  createdAt:new Date().toISOString(),
+  createdBy:u.id,
+  initialDeadline:requestDeadline(rec.date)||null,
+  auditorDecision:null,managerDecision:null,
+  history:[{at:new Date().toISOString(),by:u.id,action:'Request submitted'}]
+ };
+ state.requests.push(req);
+ try{report(rec.date).status='disputed'}catch(e){}
+
+ addHistory({
+  requestId:req.id,recordId:rec.recordId,employeeId:rec.employeeId,
+  employeeName:(emp(rec.employeeId)||{}).name||'',
+  reportDate:rec.date,module:rec.module,
+  previousScore:current,originalScore:req.originalScore,
+  requestedScore:requested,approvedScore:null,
+  decision:'Request submitted',employeeReason:reason,
+  employeeComment:req.comments,auditorComment:null,
+  submittedBy:u.id,submittedAt:req.createdAt,decidedBy:null,decidedAt:null
+ });
+
+ const link={type:'request',requestId:req.id,recordId:rec.recordId,
+             employeeId:rec.employeeId,date:rec.date,module:rec.module};
+ window.gcNotifyRole('auditor','Score change requested',
+  (emp(rec.employeeId)||{}).name+' requested a change to the '+
+  (moduleLabels[rec.module]||rec.module)+' score for '+fmtDate(rec.date)+'.',link);
+ log('Score request submitted',req.id+' for record '+rec.recordId);
+ save();closeModal();renderPage();
+ toast('Request '+req.id+' sent for auditor review.');
+}
+
+/* ---------- 4. auditor and manager decisions ----------------------- */
+
+const DECISIONS={
+ approve:{title:'Approve requested score',label:'Approve Requested Score'},
+ adjust:{title:'Approve with a different score',label:'Approve with a Different Score'},
+ reject:{title:'Reject request',label:'Reject Request'},
+ more_info:{title:'Request more information',label:'Request More Information'},
+ escalate:{title:'Escalate to manager',label:'Escalate to Manager'}
+};
+
+function decisionForm(req,type){
+ const needsScore=type==='approve'||type==='adjust';
+ const suggested=type==='approve'?req.requestedScore:((Number(req.currentScore)+Number(req.requestedScore))/2);
+ modal(DECISIONS[type].title,
+  '<div class="form-grid">'+
+   (needsScore
+    ?'<div class="field"><label>Approved score</label><input id="decScore" type="number" min="0" max="5" step="0.05" value="'+
+      Number(suggested).toFixed(2)+'"'+(type==='approve'?' readonly':'')+'></div>'+
+     '<div class="field"><label>Current score</label><input value="'+score2(req.currentScore)+'" disabled></div>'
+    :'')+
+   '<div class="field full"><label>Decision comment</label>'+
+     '<textarea id="decNote" placeholder="A comment is required."></textarea></div>'+
+  '</div>',
+  [{label:'Cancel',class:'btn',close:true},
+   {label:'Save decision',class:'btn primary',action:()=>saveDecision(req,type)}]);
+ applyLanguage(document.getElementById('modalRoot'));
+}
+
+function saveDecision(req,type){
+ const note=val('decNote').trim();
+ if(!note){toast('Enter a decision comment before saving.');return}
+ const u=currentUser(),now=new Date().toISOString();
+ const rec=window.gcRecordById(req.recordId);
+ const isManager=u.role==='manager';
+ let approved=null,decision=DECISIONS[type].label;
+
+ if(type==='approve'||type==='adjust'){
+  approved=Number(type==='approve'?req.requestedScore:val('decScore'));
+  if(!Number.isFinite(approved)||approved<0||approved>5){toast('Enter an approved score between 0.00 and 5.00.');return}
+  if(!rec){toast('The original record could no longer be found, so the score was not changed.');return}
+  const before=recordFinal(rec);
+  window.gcSetOverride(rec,approved,{
+   requestId:req.id,approvedBy:u.id,previousScore:before,
+   originalScore:window.gcRuleScore(rec),comment:note
+  });
+  req.approvedScore=approved;
+  req.status=isManager?'approved_by_manager':'approved_by_auditor';
+  window.gcNotify(req.employeeId,'Score change approved',
+   'Your '+(moduleLabels[req.module]||req.module)+' score for '+fmtDate(req.reportDate)+
+   ' was changed to '+approved.toFixed(2)+'.',
+   {type:'record',recordId:req.recordId,employeeId:req.employeeId,date:req.reportDate,
+    module:req.module,requestId:req.id});
+ }else if(type==='reject'){
+  req.status=isManager?'rejected_by_manager':'rejected_by_auditor';
+  req.escalationDeadline=workingDeadline(now,state.settings.escalationDays);
+  window.gcNotify(req.employeeId,'Score change rejected',
+   'Your request '+req.id+' for '+fmtDate(req.reportDate)+' was not approved.',
+   {type:'request',requestId:req.id,recordId:req.recordId,employeeId:req.employeeId,
+    date:req.reportDate,module:req.module});
+ }else if(type==='more_info'){
+  req.status='more_information_required';
+  window.gcNotify(req.employeeId,'More information required',
+   'The auditor needs more detail on request '+req.id+'.',
+   {type:'request',requestId:req.id,recordId:req.recordId,employeeId:req.employeeId,
+    date:req.reportDate,module:req.module});
+ }else if(type==='escalate'){
+  req.status='pending_manager_review';
+  req.escalationReason=note;
+  window.gcNotifyRole('manager','Score request escalated',
+   'Request '+req.id+' for '+((emp(req.employeeId)||{}).name||'an employee')+' needs management review.',
+   {type:'request',requestId:req.id,recordId:req.recordId,employeeId:req.employeeId,
+    date:req.reportDate,module:req.module});
+  window.gcNotify(req.employeeId,'Request escalated to management',
+   'Request '+req.id+' was escalated for management review.',
+   {type:'request',requestId:req.id,recordId:req.recordId,employeeId:req.employeeId,
+    date:req.reportDate,module:req.module});
+ }
+
+ if(isManager){req.managerDecision=note;req.managerDecidedAt=now}
+ else{req.auditorDecision=note;req.auditorDecidedAt=now}
+ req.history=req.history||[];
+ req.history.push({at:now,by:u.id,action:decision});
+
+ window.gcAddHistory({
+  requestId:req.id,recordId:req.recordId,employeeId:req.employeeId,
+  employeeName:(emp(req.employeeId)||{}).name||'',
+  reportDate:req.reportDate,module:req.module,
+  previousScore:req.currentScore,originalScore:req.originalScore,
+  requestedScore:req.requestedScore,approvedScore:approved,
+  decision,employeeReason:req.reason,employeeComment:req.comments,
+  auditorComment:note,submittedBy:req.createdBy,submittedAt:req.createdAt,
+  decidedBy:u.id,decidedAt:now
+ });
+
+ log('Score request decision',req.id+': '+decision);
+ save();closeModal();renderPage();
+ toast(decision+' saved.');
+}
+
+/* ---------- 5. the auditor's view of a request --------------------- */
+
+function detailRow(label,value){
+ const empty=value==null||value===''||value===NOT_PROVIDED;
+ return '<div class="gc-detail-row'+(empty?' gc-missing':'')+'"><span>'+esc(label)+
+  '</span><strong>'+esc(empty?NOT_PROVIDED:value)+'</strong></div>';
+}
+function block(title,body,wide){
+ return '<div class="gc-detail-block'+(wide?' gc-detail-full':'')+'"><h4>'+esc(title)+'</h4>'+body+'</div>';
+}
+
+function calculationRows(rec){
+ if(!rec)return '<div class="role-note">The original record could no longer be found.</div>';
+ const sla=recordSla(rec),ruled=window.gcRuleScore(rec),o=window.gcOverrideFor(rec);
+ const audited=rec.module==='email'||rec.module==='zoho';
+ const perTask=Number(state.settings.missedTaskDeduction==null?1:state.settings.missedTaskDeduction);
+ const tasks=Math.max(0,Number(rec.missedTasks)||0);
+ const items=[
+  '<li><span>'+(audited?'Starting point: quality audit score':'Starting point: SLA score')+
+   '</span><b>'+score2(audited?rec.auditScore:sla)+'</b></li>',
+  audited?'<li><span>SLA shortfall</span><b>-'+score2(5-(sla==null?0:sla))+'</b></li>':'',
+  '<li><span>'+esc(tasks+' missed task(s) at '+perTask.toFixed(2)+' each')+'</span><b>'+
+   (tasks?'-':'')+score2(tasks*perTask)+'</b></li>',
+  '<li><span>Score from the portal rules</span><b>'+score2(ruled)+'</b></li>',
+  o?'<li><span>Approved correction</span><b>'+score2(o.score)+'</b></li>':''
+ ].filter(Boolean);
+ return '<ul class="gc-calc-list">'+items.join('')+'</ul>';
+}
+
+function priorChanges(recordId,currentRequestId){
+ const rows=(state.scoreHistory||[]).filter(h=>h.recordId===recordId&&h.requestId!==currentRequestId);
+ if(!rows.length)return '<div class="role-note">No earlier changes were made to this record.</div>';
+ return rows.map(h=>detailRow(fmtDateTime(h.at)+' · '+h.decision,
+   (h.approvedScore!=null?'Score set to '+score2(h.approvedScore):'No score change')+
+   ' · '+((emp(h.decidedBy)||emp(h.submittedBy)||{}).name||''))).join('');
+}
+
+const baseOpenRequest=openRequest;
+openRequest=function(id){
+ const req=(state.requests||[]).find(x=>x.id===id);
+ if(!req)return baseOpenRequest.apply(this,arguments);
+ const u=currentUser(),e=emp(req.employeeId)||{},rec=window.gcRecordById(req.recordId);
+
+ /* Opening the request is what moves it from "requested" to "under
+    review", which is what the employee then sees. */
+ if(u.role==='auditor'&&req.status==='pending_auditor_review'&&!req.openedByAuditorAt){
+  req.openedByAuditorAt=new Date().toISOString();save();
+ }
+
+ const attachment=req.attachment
+  ?'<a class="btn small" href="'+req.attachment.dataUrl+'" download="'+esc(req.attachment.name)+'">'+
+    esc(req.attachment.name)+'</a>'
+  :'<span class="muted">'+esc(NOT_PROVIDED)+'</span>';
+
+ const body='<div class="gc-detail-grid">'+
+  block('Request',
+   detailRow('Request ID',req.id)+
+   detailRow('Status',requestStatusLabel(req))+
+   detailRow('Employee',e.name)+
+   detailRow('Report date',fmtDate(req.reportDate))+
+   detailRow('Performance category',moduleLabels[req.module]||req.module)+
+   detailRow('Related record ID',req.recordId))+
+  block('Scores',
+   detailRow('Original score',score2(req.originalScore!=null?req.originalScore:req.currentScore))+
+   detailRow('Score when requested',score2(req.currentScore))+
+   detailRow('Requested by employee',score2(req.requestedScore))+
+   detailRow('Approved score',req.approvedScore==null?null:score2(req.approvedScore))+
+   detailRow('Current score',rec?score2(recordFinal(rec)):null))+
+  block('Employee explanation',
+   detailRow('Reason',req.reason)+
+   detailRow('Supporting comments',req.comments||req.explanation)+
+   '<div class="gc-detail-row"><span>'+esc('Supporting document')+'</span><strong>'+attachment+'</strong></div>')+
+  block('Original auditor remarks',
+   detailRow('Remarks on the record',rec?rec.remarks:null)+
+   detailRow('Root cause',rec?rec.rootCause:null)+
+   detailRow('Auditor decision',req.auditorDecision)+
+   detailRow('Manager decision',req.managerDecision))+
+  block('Score calculation',calculationRows(rec),true)+
+  block('Previous changes to this record',priorChanges(req.recordId,req.id),true)+
+  block('Request history',
+   (req.history||[]).map(h=>detailRow(fmtDateTime(h.at)+' · '+((emp(h.by)||{}).name||h.by),h.action)).join('')
+   ||'<div class="role-note">No history yet.</div>',true)+
+ '</div>';
+
+ const actions=[{label:'Close',class:'btn',close:true}];
+ const auditorCanAct=u.role==='auditor'&&
+   ['pending_auditor_review','more_information_required','under_auditor_review'].indexOf(req.status)>=0;
+ const managerCanAct=u.role==='manager'&&req.status==='pending_manager_review';
+ if(auditorCanAct||managerCanAct){
+  if(auditorCanAct)actions.push({label:DECISIONS.more_info.label,class:'btn',action:()=>decisionForm(req,'more_info')});
+  actions.push({label:DECISIONS.reject.label,class:'btn danger',action:()=>decisionForm(req,'reject')});
+  if(auditorCanAct)actions.push({label:DECISIONS.escalate.label,class:'btn',action:()=>decisionForm(req,'escalate')});
+  actions.push({label:DECISIONS.adjust.label,class:'btn',action:()=>decisionForm(req,'adjust')});
+  actions.push({label:DECISIONS.approve.label,class:'btn success',action:()=>decisionForm(req,'approve')});
+ }
+ if(rec)actions.splice(1,0,{label:'Open the record',class:'btn',
+   action:()=>window.gcOpenRecordTarget({type:'record',recordId:req.recordId,employeeId:req.employeeId,
+     date:req.reportDate,module:req.module,requestId:req.id})});
+
+ modal('Score change request',body,actions);
+ const shell=document.querySelector('#modalRoot .modal');
+ if(shell)shell.classList.add('gc-review-modal');
+ applyLanguage(document.getElementById('modalRoot'));
+};
+window.gcOpenRequest=id=>openRequest(id);
+
+})();
+</script>
+<style id="gc-v14-css">
+.gc-alert-item{cursor:pointer}
+.gc-alert-item:hover{border-color:var(--gold)}
+.gc-alert-item.gc-unread{border-inline-start:3px solid var(--gold)}
+.gc-alert-meta{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.gc-alert-meta span{font-size:11px;font-weight:700;border:1px solid var(--line);
+  border-radius:999px;padding:2px 8px;color:var(--muted)}
+.gc-focus-record{outline:2px solid var(--gold);outline-offset:2px}
+.gc-focus-field{background:var(--gold-soft);border-radius:8px;
+  box-shadow:0 0 0 4px var(--gold-soft);animation:gcPageEnter .4s var(--gc-ease) both}
+.gc-focus-field>strong{color:var(--gold-dark)}
+.gc-review-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.gc-record-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;
+  padding-top:12px;border-top:1px dashed var(--line)}
+.gc-notif{display:flex;gap:10px;align-items:flex-start;width:100%;text-align:start;
+  padding:12px;border:1px solid var(--line);border-radius:12px;background:var(--card);
+  color:var(--ink);cursor:pointer;margin-bottom:8px}
+.gc-notif:hover{border-color:var(--gold)}
+.gc-notif.gc-unread{border-inline-start:3px solid var(--gold)}
+.gc-notif b{display:block;font-size:13px}
+.gc-notif p{margin:4px 0 0;font-size:12px;color:var(--muted)}
+.gc-notif small{display:block;margin-top:5px;font-size:11px;color:var(--muted)}
+html[dir="rtl"] .gc-notif{text-align:start}
+</style>
+<script id="gc-v14-alerts-js">
+/* ===================================================================
+   Golden Cube v14 — part 3: alerts that open the record they describe
+   =================================================================== */
+(function(){
+'use strict';
+
+const NOT_PROVIDED='Not provided';
+function score2(v){return Number.isFinite(Number(v))?Number(v).toFixed(2):NOT_PROVIDED}
+
+/* ---------- 1. alerts carry the identity of their record ----------- */
+
+function statusOf(r){return r.status||(r.missed?'missed':(r.end?'completed':'pending'))}
+
+/* Each alert names the record it came from, so opening it can never
+   land on the wrong row even if the employee is later renamed. */
+function linkOf(rec,extra){
+ return Object.assign({
+  type:'record',recordId:rec.recordId,employeeId:rec.employeeId,
+  employeeName:(emp(rec.employeeId)||{}).name||'',
+  date:rec.date,module:rec.module
+ },extra||{});
+}
+
+const legacyAlerts=automaticAlerts;
+
+automaticAlerts=function(){
+ const out=[],u=currentUser();
+ if(!u)return [];
+ const lowScore=Number(state.settings.lowScoreAlert==null?4:state.settings.lowScoreAlert);
+ const target=Number(state.settings.target);
+
+ (state.records||[]).forEach(rec=>{
+  if(!rec.recordId)return;
+  const e=emp(rec.employeeId);
+  if(!e)return;
+  const name=e.name,when=fmtDate(rec.date),cat=moduleLabels[rec.module]||rec.module;
+  const final=recordFinal(rec),sla=recordSla(rec);
+
+  if(final!=null&&final<lowScore){
+   out.push({id:'score-'+rec.recordId,severity:'high',type:'score',
+    title:'Score below threshold',
+    message:name+' scored '+score2(final)+' on '+cat+' for '+when+'.',
+    field:'Final score',link:linkOf(rec)});
+  }
+  const missed=Math.max(0,Number(rec.missedTasks)||0);
+  if(missed>0){
+   out.push({id:'missed-'+rec.recordId,severity:missed>2?'high':'medium',type:'missed',
+    title:'Missed applications recorded',
+    message:name+' has '+missed+' missed application(s) on '+cat+' for '+when+'.',
+    field:'Missed applications / tasks',link:linkOf(rec)});
+  }
+  if(sla!=null&&sla<target&&statusOf(rec)!=='pending'){
+   out.push({id:'sla-'+rec.recordId,severity:'medium',type:'sla',
+    title:'SLA below target',
+    message:name+' recorded an SLA score of '+score2(sla)+' on '+cat+' for '+when+'.',
+    field:'SLA score',link:linkOf(rec)});
+  }
+  const audit=Number(rec.auditScore);
+  if(Number.isFinite(audit)&&audit<target&&(rec.module==='email'||rec.module==='zoho')){
+   out.push({id:'audit-'+rec.recordId,severity:'medium',type:'audit',
+    title:'Audit item below target',
+    message:name+' received an audit score of '+score2(audit)+' on '+cat+' for '+when+'.',
+    field:'Audit score',link:linkOf(rec)});
+  }
+  const fb=rec.excelFields&&rec.excelFields.auditorFeedback;
+  const fbText=fb&&fb.value!=null&&String(fb.value).trim();
+  if(fbText){
+   out.push({id:'feedback-'+rec.recordId,severity:'low',type:'feedback',
+    title:'Auditor feedback recorded',
+    message:name+' · '+cat+' · '+when+': '+String(fbText).slice(0,90),
+    field:'Auditor feedback',link:linkOf(rec)});
+  }
+ });
+
+ (state.requests||[]).forEach(r=>{
+  const open=['approved_by_auditor','approved_by_manager','rejected_by_manager','closed'].indexOf(r.status)<0;
+  if(!open)return;
+  const name=(emp(r.employeeId)||{}).name||'An employee';
+  out.push({id:'request-'+r.id,severity:'medium',type:'request',
+   title:'Score change request open',
+   message:name+' requested '+score2(r.requestedScore)+' for '+
+     (moduleLabels[r.module]||r.module)+' on '+fmtDate(r.reportDate)+'.',
+   field:'Requested by employee',
+   link:{type:'request',requestId:r.id,recordId:r.recordId,employeeId:r.employeeId,
+         employeeName:name,date:r.reportDate,module:r.module}});
+ });
+
+ /* the original trend and action-plan warnings are not tied to one row */
+ try{
+  legacyAlerts().forEach(a=>{
+   if(/^trend-|^plan-/.test(a.id))out.push(Object.assign({type:'trend'},a));
+  });
+ }catch(e){}
+
+ const dismissed=state.alertDismissals||[];
+ let visible=out.filter(a=>dismissed.indexOf(a.id)<0);
+ if(u.role==='csa')visible=visible.filter(a=>(a.link&&a.link.employeeId)===u.id||a.employeeId===u.id);
+ return visible;
+};
+
+function alertRead(id){return (state.alertReads||[]).indexOf(id)>=0}
+function markAlertRead(id){
+ state.alertReads=state.alertReads||[];
+ if(state.alertReads.indexOf(id)<0){state.alertReads.push(id);save()}
+}
+
+/* ---------- 2. opening an alert ------------------------------------ */
+
+let returnToAlerts=false;
+
+/* Resolves the link to a real record before navigating, so a stale
+   alert reports the problem instead of opening someone else's row. */
+function openTarget(link,options){
+ if(!link){toast('This alert is not linked to a record.');return}
+ const opts=options||{};
+ if(link.type==='request'&&link.requestId){
+  const req=(state.requests||[]).find(r=>r.id===link.requestId);
+  if(!req){toast('The linked score change request could no longer be found.');return}
+  returnToAlerts=!!opts.fromAlerts;
+  window.gcOpenRequest(req.id);
+  decorateBack();
+  return;
+ }
+ const rec=link.recordId?window.gcRecordById(link.recordId):null;
+ if(!rec){
+  modal('Record not available',
+   '<div class="validation-box"><div class="validation-row validation-warning">'+
+   '<span class="validation-icon">!</span><div><b>The linked performance record was not found.</b>'+
+   '<div class="muted">It may have been removed by a later import. Record ID: '+
+   esc(link.recordId||NOT_PROVIDED)+'</div></div></div></div>',
+   [{label:'Close',class:'btn',close:true}]);
+  return;
+ }
+ const e=emp(rec.employeeId);
+ if(!e){toast('The employee for this record is no longer on file.');return}
+ const u=currentUser();
+ if(u.role==='csa'&&rec.employeeId!==u.id){toast('You can only open your own records.');return}
+
+ returnToAlerts=!!opts.fromAlerts;
+ selectedDate=rec.date;
+ currentPage='daily';
+ renderNav();renderPage();
+ window.openEmployeeReview(rec.employeeId,{
+  recordId:rec.recordId,field:opts.field||link.field||null,requestId:link.requestId||null
+ });
+}
+window.gcOpenRecordTarget=link=>openTarget(link,{});
+
+/* ---------- 3. review details gains status and actions ------------- */
+
+function decorateBack(){
+ if(!returnToAlerts)return;
+ const foot=document.querySelector('#modalRoot .modal-foot');
+ if(!foot||foot.querySelector('[data-back-alerts]'))return;
+ const btn=document.createElement('button');
+ btn.className='btn';
+ btn.setAttribute('data-back-alerts','1');
+ btn.textContent='Back to Alerts';
+ btn.onclick=()=>{closeModal();returnToAlerts=false;currentPage='alerts';renderNav();renderPage()};
+ foot.insertBefore(btn,foot.firstChild);
+}
+
+function statusBadgeFor(status){
+ const good=['Approved','Accepted'],bad=['Rejected'],warn=['Change Requested','Under Auditor Review','Escalated to Management'];
+ const cls=good.indexOf(status)>=0?'good':bad.indexOf(status)>=0?'bad':warn.indexOf(status)>=0?'info':'draft';
+ return '<span class="badge '+cls+'">'+esc(status)+'</span>';
+}
+
+function decorate(employeeId,focus){
+ const modalEl=document.querySelector('#modalRoot .modal');
+ if(!modalEl)return;
+ const u=currentUser(),date=selectedDate,own=u.id===employeeId;
+ if(own)window.gcMarkViewed(employeeId,date);
+ const rs=window.gcReviewState(employeeId,date);
+
+ /* status panel, first in the grid */
+ const grid=modalEl.querySelector('.gc-detail-grid');
+ if(grid&&!grid.querySelector('.gc-review-status')){
+  const panel=document.createElement('div');
+  panel.className='gc-detail-block gc-review-status';
+  const rows=
+   '<div class="gc-detail-row"><span>'+esc('Review status')+'</span><strong>'+statusBadgeFor(rs.status)+'</strong></div>'+
+   '<div class="gc-detail-row'+(rs.firstViewedAt?'':' gc-missing')+'"><span>'+esc('First opened')+
+    '</span><strong>'+esc(rs.firstViewedAt?fmtDateTime(rs.firstViewedAt):NOT_PROVIDED)+'</strong></div>'+
+   '<div class="gc-detail-row'+(rs.acceptedAt?'':' gc-missing')+'"><span>'+esc('Accepted on')+
+    '</span><strong>'+esc(rs.acceptedAt?fmtDateTime(rs.acceptedAt):NOT_PROVIDED)+'</strong></div>'+
+   (rs.request?'<div class="gc-detail-row"><span>'+esc('Latest request')+'</span><strong>'+esc(rs.request.id)+'</strong></div>':'');
+  const canAct=own&&u.role==='csa';
+  const actions=canAct
+   ?'<div class="gc-review-actions">'+
+     (rs.acceptedAt?'':'<button class="btn small success" data-agree-day="'+esc(employeeId)+'">I Agree with This Score</button>')+
+     '<button class="btn small primary" data-request-day="'+esc(employeeId)+'">Request a Score Change</button>'+
+    '</div>'
+   :'';
+  const openReq=rs.request
+   ?'<div class="gc-review-actions"><button class="btn small" data-open-request="'+esc(rs.request.id)+'">Open request '+esc(rs.request.id)+'</button></div>'
+   :'';
+  panel.innerHTML='<h4>'+esc('Employee review')+'</h4>'+rows+actions+openReq;
+  grid.insertBefore(panel,grid.firstChild);
+ }
+
+ /* per-record request buttons and any linked request */
+ modalEl.querySelectorAll('.gc-record-block').forEach(blockEl=>{
+  const recordId=blockEl.getAttribute('data-record-id');
+  const rec=window.gcRecordById(recordId);
+  const body=blockEl.querySelector('.gc-record-body');
+  if(!rec||!body||body.querySelector('.gc-record-actions'))return;
+  const active=window.gcActiveRequestFor(rec.recordId,rec.module);
+  const o=window.gcOverrideFor(rec);
+  const bar=document.createElement('div');
+  bar.className='gc-record-actions';
+  let html='';
+  if(o){
+   html+='<span class="badge good">'+esc('Score corrected')+' '+score2(o.score)+'</span>';
+  }
+  if(active){
+   html+='<button class="btn small" data-open-request="'+esc(active.id)+'">'+
+     esc('Open request')+' '+esc(active.id)+'</button>';
+  }else if(own&&u.role==='csa'){
+   html+='<button class="btn small primary" data-request-record="'+esc(rec.recordId)+'">Request a Score Change</button>';
+  }
+  const hist=window.gcHistoryFor(rec.recordId);
+  if(hist.length){
+   html+='<span class="gc-emp-chip">'+esc('Original score')+' '+score2(
+     hist[hist.length-1].originalScore!=null?hist[hist.length-1].originalScore:window.gcRuleScore(rec))+'</span>';
+   html+='<span class="gc-emp-chip">'+esc('Current score')+' '+score2(recordFinal(rec))+'</span>';
+  }
+  if(!html)return;
+  bar.innerHTML=html;
+  body.appendChild(bar);
+ });
+
+ /* wire the injected controls */
+ modalEl.querySelectorAll('[data-agree-day]').forEach(b=>b.onclick=()=>{
+  window.gcAcceptDay(b.dataset.agreeDay,date);
+  closeModal();renderPage();toast('Thank you. Your result is marked as accepted.');
+ });
+ modalEl.querySelectorAll('[data-request-record]').forEach(b=>b.onclick=()=>
+  window.gcOpenScoreRequest(b.dataset.requestRecord));
+ modalEl.querySelectorAll('[data-request-day]').forEach(b=>b.onclick=()=>{
+  const first=modalEl.querySelector('.gc-record-block');
+  const id=first&&first.getAttribute('data-record-id');
+  if(id)window.gcOpenScoreRequest(id);else toast('There is no record to request a change for.');
+ });
+ modalEl.querySelectorAll('[data-open-request]').forEach(b=>b.onclick=()=>
+  window.gcOpenRequest(b.dataset.openRequest));
+
+ decorateBack();
+ /* the panel and buttons are injected after the modal was translated */
+ applyLanguage(modalEl);
+
+ /* focus the exact record and field the alert referred to */
+ if(focus&&focus.recordId){
+  const blockEl=modalEl.querySelector('[data-record-id="'+CSS.escape(focus.recordId)+'"]');
+  if(blockEl){
+   modalEl.querySelectorAll('.gc-record-block').forEach(x=>x.removeAttribute('open'));
+   blockEl.setAttribute('open','');
+   blockEl.classList.add('gc-focus-record');
+   if(focus.field){
+    const row=[...blockEl.querySelectorAll('.gc-detail-row')].find(r=>{
+     const label=r.querySelector('span');
+     return label&&label.textContent.trim()===focus.field;
+    });
+    if(row)row.classList.add('gc-focus-field');
+   }
+   setTimeout(()=>{
+    const t=blockEl.querySelector('.gc-focus-field')||blockEl;
+    t.scrollIntoView({behavior:'smooth',block:'center'});
+   },80);
+  }
+ }
+}
+
+const baseOpenEmployeeReview=window.openEmployeeReview;
+window.openEmployeeReview=function(employeeId,focus){
+ baseOpenEmployeeReview(employeeId);
+ try{decorate(employeeId,focus)}catch(e){console.error(e)}
+};
+
+/* ---------- 4. clickable alert lists ------------------------------- */
+
+function alertCard(a){
+ const link=a.link||{};
+ const chips=[link.employeeName,link.date?fmtDate(link.date):null,
+   link.module?(moduleLabels[link.module]||link.module):null,a.type]
+   .filter(Boolean).map(x=>'<span>'+esc(x)+'</span>').join('');
+ return '<div class="alert-item gc-alert-item'+(alertRead(a.id)?'':' gc-unread')+'" data-alert-id="'+esc(a.id)+'">'+
+  '<span class="alert-severity severity-'+esc(a.severity)+'"></span>'+
+  '<div><b>'+esc(a.title)+'</b><p class="muted" style="margin:4px 0 0">'+esc(a.message)+'</p>'+
+  (chips?'<div class="gc-alert-meta">'+chips+'</div>':'')+'</div>'+
+  '<div class="toolbar"><button class="btn small primary" data-alert-open-id="'+esc(a.id)+'">Open record</button>'+
+  '<button class="btn small" data-dismiss-alert="'+esc(a.id)+'">Dismiss</button></div></div>';
+}
+
+renderAlerts=function(){
+ const alerts=automaticAlerts();
+ const unread=alerts.filter(a=>!alertRead(a.id)).length;
+ return '<div class="card section-card"><div class="section-head"><div><h2>Automatic alerts</h2>'+
+  '<p>Every alert opens the exact performance record it was raised from.</p></div>'+
+  '<span class="badge '+(alerts.some(a=>a.severity==='high')?'bad':'good')+'">'+alerts.length+' active</span></div>'+
+  (unread?'<div class="role-note">'+unread+' unread</div>':'')+
+  '<div class="alert-list">'+
+   (alerts.length?alerts.map(alertCard).join('')
+    :'<div class="empty">No active alerts. Performance and deadlines are within the configured rules.</div>')+
+  '</div></div>';
+};
+
+function openAlertById(id){
+ const a=automaticAlerts().find(x=>x.id===id);
+ if(!a){toast('This alert is no longer active.');return}
+ markAlertRead(a.id);
+ if(a.link)openTarget(a.link,{fromAlerts:true,field:a.field});
+ else if(a.page){currentPage=a.page;renderNav();renderPage()}
+ else toast('This alert is not linked to a record.');
+}
+window.gcOpenAlert=openAlertById;
+
+/* ---------- 5. clickable notification bell ------------------------- */
+
+showNotifications=function(){
+ const u=currentUser();
+ const ns=(state.notifications||[]).filter(n=>n.userId===u.id);
+ const body=ns.length
+  ?ns.map(n=>'<button type="button" class="gc-notif'+(n.read?'':' gc-unread')+'" data-notif="'+esc(n.id)+'">'+
+     '<div><b>'+esc(n.title)+'</b><p>'+esc(n.message)+'</p>'+
+     '<small>'+esc(fmtDateTime(n.createdAt))+(n.link?' · '+esc('Opens the linked record'):'')+'</small></div></button>').join('')
+  :'<div class="empty">No notifications.</div>';
+ modal('Notifications',body,[{label:'Close',class:'btn',close:true}]);
+ document.querySelectorAll('[data-notif]').forEach(b=>{
+  b.onclick=()=>{
+   const n=(state.notifications||[]).find(x=>x.id===b.dataset.notif);
+   if(!n)return;
+   n.read=true;save();
+   if(n.link)openTarget(n.link,{fromAlerts:false});
+   else{closeModal();renderPage()}
+  };
+ });
+ applyLanguage(document.getElementById('modalRoot'));
+};
+
+/* ---------- 6. wiring ---------------------------------------------- */
+
+const baseBind=bindPage;
+bindPage=function(){
+ baseBind.apply(this,arguments);
+ /* v12 binds these to its own local function, which skips the review
+    decoration, so rebind them to the wrapped entry point. */
+ document.querySelectorAll('[data-review-employee]').forEach(b=>{
+  b.onclick=()=>window.openEmployeeReview(b.dataset.reviewEmployee);
+ });
+ document.querySelectorAll('[data-alert-open-id]').forEach(b=>{
+  b.onclick=ev=>{ev.stopPropagation();openAlertById(b.dataset.alertOpenId)};
+ });
+ document.querySelectorAll('.gc-alert-item').forEach(el=>{
+  el.onclick=ev=>{
+   if(ev.target.closest('[data-dismiss-alert]'))return;
+   openAlertById(el.dataset.alertId);
+  };
+ });
+ /* the dashboard banner opens the first alert rather than a bare list */
+ const banner=document.querySelector('.alert-banner');
+ if(banner){
+  const first=automaticAlerts()[0];
+  const btn=banner.querySelector('button');
+  if(btn&&first){
+   btn.textContent='Open alert';
+   btn.onclick=ev=>{ev.stopPropagation();openAlertById(first.id)};
+  }
+  banner.style.cursor='pointer';
+  banner.onclick=ev=>{
+   if(ev.target.closest('button'))return;
+   currentPage='alerts';renderNav();renderPage();
+  };
+ }
+};
+
+})();
+</script>
+<style id="gc-v14-import-css">
+.gc-preview-tabs{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0}
+.gc-preview-tabs button{border:1px solid var(--line);background:var(--card);color:var(--ink);
+  border-radius:999px;padding:6px 13px;font-size:12px;font-weight:700;cursor:pointer}
+.gc-preview-tabs button.active{border-color:var(--gold);background:var(--gold-soft);color:var(--gold-dark)}
+.gc-preview-list{max-height:280px;overflow:auto;border:1px solid var(--line);border-radius:12px}
+.gc-preview-list table{width:100%;border-collapse:collapse;font-size:12.5px}
+.gc-preview-list th,.gc-preview-list td{padding:7px 10px;border-bottom:1px solid var(--line);text-align:start}
+.gc-preview-list th{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+.gc-history-original{text-decoration:line-through;color:var(--muted)}
+</style>
+<script id="gc-v14-bridge-js">
+/* My Performance raises requests per day; route them through the
+   record-based flow so every request carries a record ID. */
+(function(){
+'use strict';
+openRequestForm=function(date){
+ const u=currentUser();
+ const mine=state.records.filter(r=>r.date===date&&r.employeeId===u.id&&r.recordId);
+ if(!mine.length){toast('There are no records for you on this date.');return}
+ if(mine.length===1){window.gcOpenScoreRequest(mine[0].recordId);return}
+ modal('Choose the record to correct',
+  '<div class="role-note">Pick the record the score change applies to.</div>'+
+  '<div class="gc-review-actions" style="margin-top:12px;flex-direction:column;align-items:stretch">'+
+   mine.map(r=>'<button class="btn" data-pick-record="'+esc(r.recordId)+'">'+
+     esc((moduleLabels[r.module]||r.module)+' · '+(r.reference||'')+' · '+
+     (recordFinal(r)==null?'—':recordFinal(r).toFixed(2)))+'</button>').join('')+
+  '</div>',[{label:'Cancel',class:'btn',close:true}]);
+ document.querySelectorAll('[data-pick-record]').forEach(b=>
+  b.onclick=()=>window.gcOpenScoreRequest(b.dataset.pickRecord));
+ applyLanguage(document.getElementById('modalRoot'));
+};
+})();
+</script>
+<script id="gc-v14-import-js">
+/* ===================================================================
+   Golden Cube v14 — part 4: employee directory import and audit trail
+   The directory upload reads identity only. It never carries scores,
+   remarks, targets or any daily/weekly/monthly figure into the portal.
+   =================================================================== */
+(function(){
+'use strict';
+
+const NOT_PROVIDED='Not provided';
+function words(s){return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9؀-ۿ]+/g,' ').replace(/\s+/g,' ').trim()}
+function text(v){return v==null||v===''||(typeof v==='string'&&!v.trim())?null:String(v).trim()}
+function score2(v){return Number.isFinite(Number(v))?Number(v).toFixed(2):NOT_PROVIDED}
+
+/* ---------- 1. finding the employee-name column -------------------- */
+
+const NAME_HEADERS=['employee name','employee','staff name','agent name','operator',
+ 'operator name','csa name','csa','full name','name','staff','agent','employee full name'];
+const ID_HEADERS=['employee id','employee no','employee number','employee code','staff id',
+ 'staff no','agent id','operator id','emp id','emp no','badge id','badge no'];
+const EMAIL_HEADERS=['employee email','email','email address','e mail','work email','company email','staff email'];
+const DEPT_HEADERS=['department','section','division','unit','team','branch'];
+const ROLE_HEADERS=['role','job title','designation','position','title','job role'];
+
+function headerIndex(headers,list){
+ const normed=headers.map(words);
+ for(const want of list){
+  const i=normed.indexOf(want);
+  if(i>=0)return i;
+ }
+ return -1;
+}
+
+/* A header row is the first row that names an employee column. */
+function findHeaderRow(rows){
+ const limit=Math.min(rows.length,25);
+ for(let i=0;i<limit;i++){
+  const row=rows[i]||[];
+  if(!row.some(c=>typeof c==='string'))continue;
+  if(headerIndex(row,NAME_HEADERS)>=0||headerIndex(row,ID_HEADERS)>=0)return i;
+ }
+ return -1;
+}
+
+/* ---------- 2. what is not a person -------------------------------- */
+
+const OPERATIONAL=[
+ 'urgent operational issues','walk in client sla tracking','walkin client sla tracking',
+ 'zoho chat tracking','processed by','daily report','weekly report','monthly report',
+ 'yearly report','total','totals','average','averages','summary','remarks','remark',
+ 'grand total','overall','notes','note','comments','sub total','subtotal','count',
+ 'employee name','staff name','agent name','operator','full name','name'
+];
+
+function knownLabels(){
+ const set=new Set(OPERATIONAL);
+ Object.values(moduleLabels).forEach(v=>set.add(words(v)));
+ Object.keys(moduleLabels).forEach(v=>set.add(words(v)));
+ state.employees.forEach(e=>{if(e.department)set.add(words(e.department))});
+ return set;
+}
+
+/* Operational headings, totals rows and merged title cells all end up
+   in the same column as real names; none of them are people. */
+function classify(raw,labels){
+ const value=text(raw);
+ if(!value)return {kind:'excluded',why:'Empty row'};
+ const n=words(value);
+ if(!n)return {kind:'excluded',why:'No usable text'};
+ if(labels.has(n))return {kind:'excluded',why:'Operational label or heading'};
+ if(/^(total|totals|average|averages|avg|summary|grand total|overall|n a|na|none|null|nil)$/.test(n))
+  return {kind:'excluded',why:'Totals or summary row'};
+ if(/\b(report|tracking|issues?|summary|sla|processed by|walk in|walkin|urgent|template|instructions?)\b/.test(n))
+  return {kind:'excluded',why:'Operational label'};
+ if(/^[=+\-@]/.test(value))return {kind:'invalid',why:'Formula or instruction cell'};
+ if(!/[a-z؀-ۿ]/i.test(value))return {kind:'invalid',why:'No letters in the value'};
+ if(/^\d/.test(value))return {kind:'invalid',why:'Starts with a number'};
+ if(value.length<2)return {kind:'invalid',why:'Too short to be a name'};
+ if(value.length>60)return {kind:'invalid',why:'Too long to be a name'};
+ if(/[<>{}|\\^~`]/.test(value))return {kind:'invalid',why:'Contains unexpected characters'};
+ return {kind:'valid',value:normalizeName(value)};
+}
+
+/* Collapse spacing; only re-case when the file shouted or whispered. */
+function normalizeName(v){
+ const clean=String(v).replace(/\s+/g,' ').trim();
+ const letters=clean.replace(/[^A-Za-z]/g,'');
+ if(!letters)return clean;
+ const allUpper=letters===letters.toUpperCase(),allLower=letters===letters.toLowerCase();
+ if(!allUpper&&!allLower)return clean;
+ return clean.replace(/\S+/g,w=>w.charAt(0).toUpperCase()+w.slice(1).toLowerCase());
+}
+window.gcNormalizeName=normalizeName;
+
+/* ---------- 3. scanning the workbook ------------------------------- */
+
+let pendingDirectory=null;
+
+function scanDirectory(wb,fileName){
+ const out={fileName,sheet:null,column:null,columns:[],
+            valid:[],duplicates:[],excluded:[],invalid:[]};
+ const labels=knownLabels();
+ const seen=new Map();
+
+ for(const rawName of wb.SheetNames){
+  const rows=sheetRows(wb,rawName);
+  if(!rows.length)continue;
+  const hi=findHeaderRow(rows);
+  if(hi<0)continue;
+  const headers=rows[hi];
+  const nameCol=headerIndex(headers,NAME_HEADERS);
+  const idCol=headerIndex(headers,ID_HEADERS);
+  if(nameCol<0&&idCol<0)continue;
+
+  out.sheet=rawName;
+  out.columns=headers.map((h,i)=>text(h)||('Column '+(i+1)));
+  out.column=nameCol>=0?out.columns[nameCol]:out.columns[idCol];
+  const emailCol=headerIndex(headers,EMAIL_HEADERS);
+  const deptCol=headerIndex(headers,DEPT_HEADERS);
+  const roleCol=headerIndex(headers,ROLE_HEADERS);
+  out.detected={name:nameCol>=0?out.columns[nameCol]:null,
+                id:idCol>=0?out.columns[idCol]:null,
+                email:emailCol>=0?out.columns[emailCol]:null,
+                department:deptCol>=0?out.columns[deptCol]:null,
+                role:roleCol>=0?out.columns[roleCol]:null};
+
+  for(let i=hi+1;i<rows.length;i++){
+   const row=rows[i]||[];
+   const rowNo=i+1;
+   /* only the identified column is read — no scanning of other cells */
+   const rawName2=nameCol>=0?row[nameCol]:null;
+   const idValue=idCol>=0?text(row[idCol]):null;
+   if(!text(rawName2)&&!idValue)continue;
+
+   const verdict=nameCol>=0?classify(rawName2,labels)
+                          :{kind:'valid',value:normalizeName(idValue)};
+   if(verdict.kind!=='valid'){
+    out[verdict.kind].push({row:rowNo,value:text(rawName2)||idValue||'',why:verdict.why});
+    continue;
+   }
+   const person={
+    row:rowNo,name:verdict.value,
+    employeeId:idValue,
+    email:emailCol>=0?text(row[emailCol]):null,
+    department:deptCol>=0?text(row[deptCol]):null,
+    role:roleCol>=0?text(row[roleCol]):null
+   };
+   const keys=[
+    person.employeeId?'id:'+words(person.employeeId):null,
+    person.email?'mail:'+person.email.toLowerCase():null,
+    'name:'+words(person.name)
+   ].filter(Boolean);
+   const clash=keys.map(k=>seen.get(k)).find(v=>v!=null);
+   if(clash!=null){
+    out.duplicates.push({row:rowNo,value:person.name,why:'Already listed on row '+clash});
+    continue;
+   }
+   keys.forEach(k=>seen.set(k,rowNo));
+   const existing=state.employees.find(e=>
+     (person.employeeId&&words(e.employeeCode||'')===words(person.employeeId))||
+     (person.email&&String(e.email||'').toLowerCase()===person.email.toLowerCase())||
+     words(e.name)===words(person.name));
+   person.action=existing?'Update':'Add';
+   person.existingId=existing?existing.id:null;
+   out.valid.push(person);
+  }
+  break; /* the first sheet with an employee column is the directory */
+ }
+ return out;
+}
+
+/* ---------- 4. preview before anything is written ------------------ */
+
+function previewTable(rows,kind){
+ if(!rows.length)return '<div class="empty">Nothing in this group.</div>';
+ const head=kind==='valid'
+  ?'<tr><th>Row</th><th>Employee name</th><th>ID</th><th>Email</th><th>Department</th><th>Role</th><th>Action</th></tr>'
+  :'<tr><th>Row</th><th>Value</th><th>Reason</th></tr>';
+ const body=rows.map(r=>kind==='valid'
+  ?'<tr><td>'+r.row+'</td><td><b>'+esc(r.name)+'</b></td><td>'+esc(r.employeeId||'—')+'</td>'+
+   '<td>'+esc(r.email||'—')+'</td><td>'+esc(r.department||'—')+'</td>'+
+   '<td>'+esc(r.role||'—')+'</td><td>'+esc(r.action)+'</td></tr>'
+  :'<tr><td>'+r.row+'</td><td>'+esc(r.value||'—')+'</td><td>'+esc(r.why||'')+'</td></tr>').join('');
+ return '<div class="gc-preview-list"><table><thead>'+head+'</thead><tbody>'+body+'</tbody></table></div>';
+}
+
+function renderPreview(){
+ const host=document.getElementById('dirPreview');
+ if(!host)return;
+ const p=pendingDirectory;
+ if(!p){host.innerHTML='<div class="empty">Choose an employee list to preview the detected names.</div>';return}
+ if(!p.column){
+  host.innerHTML='<div class="validation-row validation-error"><span class="validation-icon">×</span>'+
+   '<div>No employee name column was found. Add a column headed Employee Name, Staff Name, Agent Name or Name.</div></div>';
+  return;
+ }
+ const groups=[['valid','Valid employee names',p.valid],
+               ['duplicates','Possible duplicates',p.duplicates],
+               ['excluded','Excluded rows',p.excluded],
+               ['invalid','Invalid values',p.invalid]];
+ const d=p.detected||{};
+ host.innerHTML=
+  '<div class="summary-strip" style="grid-template-columns:repeat(4,1fr)">'+
+   groups.map(g=>'<div class="summary-item"><span>'+esc(g[1])+'</span><strong>'+g[2].length+'</strong></div>').join('')+
+  '</div>'+
+  '<div class="role-note" style="margin-top:10px"><b>'+esc('Detected employee name column')+':</b> '+
+   esc(p.column)+' · '+esc(p.sheet)+
+   [['id','Employee ID'],['email','Employee email'],['department','Department'],['role','Role']]
+    .filter(x=>d[x[0]]).map(x=>' · '+esc(x[1])+': '+esc(d[x[0]])).join('')+
+  '</div>'+
+  '<div class="gc-preview-tabs">'+
+   groups.map((g,i)=>'<button type="button" data-preview-tab="'+g[0]+'"'+(i===0?' class="active"':'')+'>'+
+     esc(g[1])+' ('+g[2].length+')</button>').join('')+
+  '</div>'+
+  groups.map((g,i)=>'<div data-preview-panel="'+g[0]+'"'+(i===0?'':' style="display:none"')+'>'+
+    previewTable(g[2],g[0])+'</div>').join('');
+
+ host.querySelectorAll('[data-preview-tab]').forEach(b=>{
+  b.onclick=()=>{
+   host.querySelectorAll('[data-preview-tab]').forEach(x=>x.classList.toggle('active',x===b));
+   host.querySelectorAll('[data-preview-panel]').forEach(x=>{
+    x.style.display=x.getAttribute('data-preview-panel')===b.dataset.previewTab?'':'none';
+   });
+  };
+ });
+ applyLanguage(host);
+}
+
+function openDirectoryImport(){
+ if(!can('manage_employees')&&currentUser().role!=='auditor'){
+  toast('Only an administrator or auditor can import the employee list.');return;
+ }
+ pendingDirectory=null;
+ modal('Import employee list',
+  '<div class="role-note">This upload builds the employee directory only. '+
+  'Scores, remarks, targets, SLA values and daily, weekly, monthly or yearly records are never read from it.</div>'+
+  '<div class="drop-zone" style="margin-top:12px"><b>Choose an employee list</b>'+
+   '<p class="muted">The file needs a column headed Employee Name, Staff Name, Agent Name, Operator, CSA Name or Name.</p>'+
+   '<input id="dirFile" type="file" accept=".xlsx,.xlsm"></div>'+
+  '<div class="form-grid" style="margin-top:12px"><div class="field full"><label>Import mode</label>'+
+   '<select id="dirMode">'+
+    '<option value="merge">Add New Employees and Update Existing Employees</option>'+
+    '<option value="replace">Replace Employee Directory</option>'+
+   '</select>'+
+   '<small class="muted">Replacing the directory marks people who are missing from the file as inactive. '+
+   'It never deletes their history.</small></div></div>'+
+  '<div id="dirPreview" class="import-preview" style="margin-top:14px">'+
+   '<div class="empty">Choose an employee list to preview the detected names.</div></div>',
+  [{label:'Cancel Import',class:'btn',close:true},
+   {label:'Confirm Import',class:'btn primary',action:commitDirectory}]);
+
+ document.getElementById('dirFile').onchange=async ev=>{
+  const file=ev.target.files&&ev.target.files[0];
+  if(!file)return;
+  try{
+   const wb=await XLSX.read(await file.arrayBuffer(),{type:'array',cellDates:true});
+   pendingDirectory=scanDirectory(wb,file.name);
+  }catch(err){
+   pendingDirectory=null;
+   document.getElementById('dirPreview').innerHTML=
+    '<div class="validation-row validation-error"><span class="validation-icon">×</span><div>'+
+    esc('Could not read the file: '+(err.message||err))+'</div></div>';
+   return;
+  }
+  renderPreview();
+ };
+ applyLanguage(document.getElementById('modalRoot'));
+}
+window.gcOpenDirectoryImport=openDirectoryImport;
+
+/* Nothing is written until the preview has been confirmed. */
+function commitDirectory(){
+ const p=pendingDirectory;
+ if(!p){toast('Choose an employee list and review the preview first.');return}
+ if(!p.column){toast('No employee name column was detected in this file.');return}
+ if(!p.valid.length){toast('No valid employee names were found to import.');return}
+ const mode=val('dirMode')||'merge';
+ const seen=new Set();
+ let added=0,updated=0;
+
+ p.valid.forEach(person=>{
+  const e=window.gcResolveEmployee({
+   name:person.name,employeeId:person.employeeId,email:person.email,
+   department:person.department,role:person.role
+  });
+  if(!e)return;
+  if(person.existingId){updated++}else{added++}
+  e.name=person.name;
+  if(person.employeeId)e.employeeCode=person.employeeId;
+  if(person.email)e.email=person.email;
+  if(person.department)e.department=person.department;
+  if(person.role)e.title=person.role;
+  e.active=true;
+  e.source=e.source||'directory';
+  delete e.pendingImport;
+  seen.add(e.id);
+ });
+
+ let deactivated=0;
+ if(mode==='replace'){
+  /* history stays; the person is simply no longer current */
+  state.employees.forEach(e=>{
+   if(e.role!=='csa'||seen.has(e.id))return;
+   if(e.active!==false){e.active=false;e.deactivatedAt=new Date().toISOString();deactivated++}
+  });
+ }
+
+ state.importHistory=state.importHistory||[];
+ state.importHistory.unshift({id:'dir'+Date.now(),fileName:p.fileName,
+  sheets:[p.sheet],records:0,scores:0,skipped:p.excluded.length+p.invalid.length,
+  employees:p.valid.length,kind:'directory',
+  userId:currentUser().id,createdAt:new Date().toISOString()});
+ log('Employee directory imported',
+  p.fileName+': '+added+' added, '+updated+' updated, '+deactivated+' deactivated');
+ if(window.gcResetDailyFilters)window.gcResetDailyFilters();
+ save();closeModal();renderPage();
+ toast(added+' employees added, '+updated+' updated'+(deactivated?', '+deactivated+' set inactive':')').replace(/\)$/,''));
+}
+
+/* ---------- 5. an entry point on the integrations page ------------- */
+
+const baseRenderIntegrations=renderIntegrations;
+renderIntegrations=function(){
+ let html=baseRenderIntegrations.apply(this,arguments);
+ const card='<div class="feature-card"><div class="section-head"><div><h3>Employee list</h3>'+
+  '<p>Import employee names only. Scores and performance data are never read from this file.</p></div>'+
+  '<span class="integration-status ready">Available now</span></div>'+
+  '<button class="btn primary" id="dirImportMain">Import employee list</button></div>';
+ html=html.replace('<button class="btn primary" id="excelImportMain">Import Excel</button></div>',
+                   '<button class="btn primary" id="excelImportMain">Import Excel</button></div>'+card);
+ return html;
+};
+
+/* ---------- 6. the audit trail ------------------------------------- */
+
+function historyRow(h){
+ const current=(()=>{const r=window.gcRecordById(h.recordId);return r?recordFinal(r):null})();
+ return '<tr><td><b>'+esc(h.requestId||'—')+'</b><br><span class="muted">'+esc(fmtDateTime(h.at))+'</span></td>'+
+  '<td>'+esc(h.employeeName||'')+'<br><span class="muted">'+esc(fmtDate(h.reportDate))+' · '+
+   esc(moduleLabels[h.module]||h.module||'')+'</span></td>'+
+  '<td class="number"><span class="gc-history-original">'+esc(score2(h.originalScore!=null?h.originalScore:h.previousScore))+'</span></td>'+
+  '<td class="number">'+esc(score2(h.requestedScore))+'</td>'+
+  '<td class="number">'+esc(h.approvedScore==null?'—':score2(h.approvedScore))+'</td>'+
+  '<td class="number">'+esc(score2(current))+'</td>'+
+  '<td>'+esc(h.decision||'')+'</td>'+
+  '<td>'+esc(h.employeeReason||'—')+'<br><span class="muted">'+esc(h.auditorComment||'')+'</span></td>'+
+  '<td>'+esc((emp(h.submittedBy)||{}).name||'—')+'<br><span class="muted">'+
+   esc(h.decidedBy?((emp(h.decidedBy)||{}).name||''):'')+'</span></td>'+
+  '<td>'+esc(h.recordId||'')+'</td></tr>';
+}
+
+const baseRenderAudit=renderAudit;
+renderAudit=function(){
+ const u=currentUser();
+ let html=baseRenderAudit.apply(this,arguments);
+ if(['admin','manager'].indexOf(u.role)<0)return html;
+ const rows=state.scoreHistory||[];
+ const table='<div class="card section-card" style="margin-top:16px">'+
+  '<div class="section-head"><div><h2>Score change history</h2>'+
+  '<p>Every request and decision, with the original score kept alongside the current one.</p></div>'+
+  '<span class="badge '+(rows.length?'info':'draft')+'">'+rows.length+' entries</span></div>'+
+  '<div class="table-wrap"><table class="table"><thead><tr>'+
+   '<th>Request</th><th>Employee</th><th class="number">Original score</th>'+
+   '<th class="number">Requested</th><th class="number">Approved</th><th class="number">Current score</th>'+
+   '<th>Decision</th><th>Reason and comment</th><th>People</th><th>Record ID</th>'+
+  '</tr></thead><tbody>'+
+   (rows.length?rows.map(historyRow).join('')
+    :'<tr><td colspan="10" class="empty">No score changes have been requested yet.</td></tr>')+
+  '</tbody></table></div></div>';
+ return html+table;
+};
+
+/* ---------- 7. wiring ---------------------------------------------- */
+
+const baseBind=bindPage;
+bindPage=function(){
+ baseBind.apply(this,arguments);
+ const b=document.getElementById('dirImportMain');
+ if(b)b.onclick=openDirectoryImport;
+};
+
+/* ---------- 8. Arabic ---------------------------------------------- */
+
+const AR={
+ 'Open record':'فتح السجل','Back to Alerts':'العودة إلى التنبيهات','Dismiss':'تجاهل',
+ 'Every alert opens the exact performance record it was raised from.':'يفتح كل تنبيه سجل الأداء الذي صدر عنه بالضبط.',
+ 'unread':'غير مقروء','Opens the linked record':'يفتح السجل المرتبط',
+ 'This alert is no longer active.':'لم يعد هذا التنبيه نشطاً.',
+ 'This alert is not linked to a record.':'هذا التنبيه غير مرتبط بسجل.',
+ 'Record not available':'السجل غير متاح',
+ 'The linked performance record was not found.':'لم يتم العثور على سجل الأداء المرتبط.',
+ 'The linked score change request could no longer be found.':'لم يعد طلب تعديل الدرجة المرتبط موجوداً.',
+ 'You can only open your own records.':'يمكنك فتح سجلاتك فقط.',
+
+ 'Employee review':'مراجعة الموظف','Review status':'حالة المراجعة','First opened':'أول فتح',
+ 'Accepted on':'تم القبول في','Latest request':'أحدث طلب','Open request':'فتح الطلب',
+ 'Not Reviewed':'لم تتم المراجعة','Viewed':'تمت المشاهدة','Accepted':'مقبول',
+ 'Change Requested':'تم طلب تعديل','Under Auditor Review':'قيد مراجعة المدقق',
+ 'Approved':'معتمد','Rejected':'مرفوض','Escalated to Management':'مُصعّد إلى الإدارة',
+ 'I Agree with This Score':'أوافق على هذه الدرجة','Request a Score Change':'طلب تعديل الدرجة',
+ 'Thank you. Your result is marked as accepted.':'شكراً لك. تم تسجيل نتيجتك كمقبولة.',
+ 'Score corrected':'تم تصحيح الدرجة','Original score':'الدرجة الأصلية','Current score':'الدرجة الحالية',
+
+ 'Request a score change':'طلب تعديل الدرجة','Employee name':'اسم الموظف',
+ 'Requested score':'الدرجة المطلوبة','Related record ID':'معرّف السجل المرتبط',
+ 'Reason for the request':'سبب الطلب','Select a reason':'اختر سبباً',
+ 'Supporting comments':'ملاحظات داعمة','Supporting document or screenshot':'مستند أو لقطة شاشة داعمة',
+ 'Optional. The file is stored inside this portal file.':'اختياري. يُحفظ الملف داخل ملف البوابة.',
+ 'Submit request':'إرسال الطلب','Cancel':'إلغاء',
+ 'Select a reason before submitting the request.':'اختر سبباً قبل إرسال الطلب.',
+ 'A score change is already being reviewed for this record.':'توجد بالفعل مراجعة لتعديل درجة هذا السجل.',
+ 'You can only request changes to your own records.':'يمكنك طلب تعديل سجلاتك فقط.',
+ 'That performance record could no longer be found.':'لم يعد سجل الأداء هذا موجوداً.',
+
+ 'Score change request':'طلب تعديل درجة','Request ID':'رقم الطلب','Request':'الطلب',
+ 'Scores':'الدرجات','Score when requested':'الدرجة وقت الطلب','Requested by employee':'المطلوبة من الموظف',
+ 'Approved score':'الدرجة المعتمدة','Employee explanation':'شرح الموظف','Reason':'السبب',
+ 'Supporting document':'مستند داعم','Original auditor remarks':'ملاحظات المدقق الأصلية',
+ 'Remarks on the record':'ملاحظات السجل','Auditor decision':'قرار المدقق','Manager decision':'قرار المدير',
+ 'Previous changes to this record':'التغييرات السابقة على هذا السجل',
+ 'No earlier changes were made to this record.':'لم تُجرَ تغييرات سابقة على هذا السجل.',
+ 'Request history':'سجل الطلب','No history yet.':'لا يوجد سجل بعد.',
+ 'Open the record':'فتح السجل','Score from the portal rules':'الدرجة وفق قواعد البوابة',
+ 'Approved correction':'التصحيح المعتمد','The original record could no longer be found.':'لم يعد السجل الأصلي موجوداً.',
+
+ 'Approve Requested Score':'اعتماد الدرجة المطلوبة','Approve with a Different Score':'اعتماد بدرجة مختلفة',
+ 'Reject Request':'رفض الطلب','Request More Information':'طلب معلومات إضافية','Escalate to Manager':'تصعيد إلى المدير',
+ 'Approve requested score':'اعتماد الدرجة المطلوبة','Approve with a different score':'اعتماد بدرجة مختلفة',
+ 'Reject request':'رفض الطلب','Request more information':'طلب معلومات إضافية','Escalate to manager':'تصعيد إلى المدير',
+ 'Decision comment':'تعليق القرار','A comment is required.':'التعليق مطلوب.','Save decision':'حفظ القرار',
+ 'Enter a decision comment before saving.':'أدخل تعليق القرار قبل الحفظ.',
+
+ 'Import employee list':'استيراد قائمة الموظفين','Employee list':'قائمة الموظفين',
+ 'Import employee names only. Scores and performance data are never read from this file.':'استيراد أسماء الموظفين فقط. لا تُقرأ الدرجات أو بيانات الأداء من هذا الملف.',
+ 'This upload builds the employee directory only. Scores, remarks, targets, SLA values and daily, weekly, monthly or yearly records are never read from it.':'يبني هذا الرفع دليل الموظفين فقط. لا تُقرأ منه الدرجات أو الملاحظات أو الأهداف أو قيم مستوى الخدمة أو السجلات اليومية أو الأسبوعية أو الشهرية أو السنوية.',
+ 'Choose an employee list':'اختر قائمة موظفين',
+ 'Choose an employee list to preview the detected names.':'اختر قائمة موظفين لمعاينة الأسماء المكتشفة.',
+ 'Import mode':'وضع الاستيراد',
+ 'Add New Employees and Update Existing Employees':'إضافة موظفين جدد وتحديث الحاليين',
+ 'Replace Employee Directory':'استبدال دليل الموظفين',
+ 'Confirm Import':'تأكيد الاستيراد','Cancel Import':'إلغاء الاستيراد',
+ 'Valid employee names':'أسماء موظفين صحيحة','Possible duplicates':'تكرارات محتملة',
+ 'Excluded rows':'صفوف مستبعدة','Invalid values':'قيم غير صالحة',
+ 'Detected employee name column':'عمود اسم الموظف المكتشف',
+ 'Nothing in this group.':'لا يوجد شيء في هذه المجموعة.',
+ 'Row':'الصف','Value':'القيمة','Action':'الإجراء','Employee ID':'رقم الموظف','Employee email':'بريد الموظف',
+ 'No valid employee names were found to import.':'لم يتم العثور على أسماء موظفين صحيحة للاستيراد.',
+ 'No employee name column was detected in this file.':'لم يتم اكتشاف عمود اسم الموظف في هذا الملف.',
+ 'Only an administrator or auditor can import the employee list.':'يمكن للمسؤول أو المدقق فقط استيراد قائمة الموظفين.',
+
+ 'Score change history':'سجل تعديلات الدرجات',
+ 'Every request and decision, with the original score kept alongside the current one.':'كل طلب وقرار، مع الاحتفاظ بالدرجة الأصلية إلى جانب الحالية.',
+ 'Requested':'المطلوبة','Approved':'معتمد','Decision':'القرار',
+ 'Reason and comment':'السبب والتعليق','People':'الأشخاص','Record ID':'معرّف السجل',
+ 'No score changes have been requested yet.':'لم يتم طلب أي تعديلات على الدرجات بعد.',
+ 'entries':'إدخالات','Score change requested':'تم طلب تعديل درجة',
+ 'Score change approved':'تم اعتماد تعديل الدرجة','Score change rejected':'تم رفض تعديل الدرجة',
+ 'More information required':'مطلوب معلومات إضافية','Score request escalated':'تم تصعيد طلب الدرجة',
+ 'Request escalated to management':'تم تصعيد الطلب إلى الإدارة'
+};
+if(typeof ARABIC_TEXT==='object'&&ARABIC_TEXT){
+ Object.keys(AR).forEach(k=>{if(!ARABIC_TEXT[k])ARABIC_TEXT[k]=AR[k]});
+ if(typeof ENGLISH_TEXT==='object'&&ENGLISH_TEXT){
+  Object.keys(AR).forEach(k=>{if(!ENGLISH_TEXT[AR[k]])ENGLISH_TEXT[AR[k]]=k});
+ }
+}
+
+try{document.title='Golden Cube Performance Portal v14'}catch(e){}
+
 })();
 </script>
 </body>
