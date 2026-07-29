@@ -3303,6 +3303,10 @@ parseGoldenCubeWorkbook=function(wb,fileName,importMonth){
    continue;
   }
   const headers=rows[hi],map=mapFields(headers);
+  /* a heading can look right while the column below it holds Yes/No
+     flags or nothing at all — check the values before trusting it */
+  if(window.gcValidateMapping)window.gcValidateMapping(map,rows,hi);
+  if(window.gcDropFileScore)window.gcDropFileScore(map);
   const idCol=map.employee!=null?map.employee:(map.employeeId!=null?map.employeeId:map.employeeEmail);
   if(idCol==null){
    out.skipped.push(name+': no employee, employee ID or employee email column was recognized');
@@ -6892,6 +6896,132 @@ if(typeof ARABIC_TEXT==='object'&&ARABIC_TEXT){
   Object.keys(AR).forEach(k=>{if(!ENGLISH_TEXT[AR[k]])ENGLISH_TEXT[AR[k]]=k});
  }
 }
+})();
+</script>
+<script id="gc-v17-js">
+/* ===================================================================
+   Golden Cube v17 — columns that mean nothing are not shown
+   1. A header can look right while the column holds Yes/No flags. The
+      mapping is now checked against the values underneath it, so a flag
+      column never becomes a reference, a timestamp or a score.
+   2. The file's own calculated score is no longer read as a portal
+      field. The portal calculates the score; the file's figure stays
+      visible under Additional Details.
+   3. Table columns with nothing in them for the selected day are hidden
+      instead of showing a row of dashes.
+   =================================================================== */
+(function(){
+'use strict';
+
+/* ---------- 1. check a mapping against its own values --------------- */
+
+const FLAG=/^(y|n|yes|no|true|false|done|not done|pending|n a|na|ok|nil|none)$/i;
+
+function columnValues(rows,startRow,col,limit){
+ const out=[],cap=limit||60;
+ for(let i=startRow;i<rows.length&&out.length<cap;i++){
+  const v=rows[i]&&rows[i][col];
+  if(v==null||v==='')continue;
+  if(typeof v==='string'&&!v.trim())continue;
+  out.push(v);
+ }
+ return out;
+}
+
+/* A Yes/No column is a flag, whatever its heading says. */
+function isFlagColumn(values){
+ if(values.length<2)return false;
+ const flags=values.filter(v=>typeof v==='boolean'||FLAG.test(String(v).trim().replace(/\//g,' ')));
+ return flags.length/values.length>=0.8;
+}
+
+/* Fields that need a real identifier, timestamp or number. "missed"
+   is left out on purpose: Yes/No is a valid answer there. */
+const NEEDS_REAL_VALUE=['employee','employeeId','employeeEmail','reference','date',
+ 'start','end','firstResponse','slaTime','slaScore','auditScore','score','target','actual'];
+
+function validateMapping(map,rows,headerRow){
+ Object.keys(map).forEach(field=>{
+  const values=columnValues(rows,headerRow+1,map[field]);
+  if(!values.length){delete map[field];return}          /* column is empty */
+  if(NEEDS_REAL_VALUE.indexOf(field)>=0&&isFlagColumn(values))delete map[field];
+ });
+ return map;
+}
+window.gcValidateMapping=validateMapping;
+
+/* ---------- 2. the portal calculates the score --------------------- */
+
+/* The workbook's own total is not read as a portal field. It still
+   shows under Additional Details, so nothing is hidden — it simply
+   stops being mistaken for a value the portal relies on. */
+function dropFileScore(map){delete map.score;return map}
+
+window.gcDropFileScore=dropFileScore;
+
+/* ---------- 3. hide columns with nothing in them ------------------- */
+
+const EMPTY=['','—','-','–','Not provided','Not assessed','N/A','NA'];
+
+function columnIsEmpty(rows,index){
+ return rows.every(r=>{
+  const cell=r.children[index];
+  if(!cell)return true;
+  if(cell.querySelector('input,select,textarea,button'))return false;  /* editable */
+  return EMPTY.indexOf(cell.textContent.trim())>=0;
+ });
+}
+
+/* Only on Daily Reports, and never the employee column or the actions
+   column, which carry no text of their own. */
+function trimDeadColumns(){
+ if(currentPage!=='daily')return;
+ document.querySelectorAll('#view table').forEach(table=>{
+  /* a table you can type into keeps every column: the derived ones fill
+     in as soon as the timings are entered */
+  if(table.querySelector('tbody input,tbody select,tbody textarea'))return;
+  const heads=[...table.querySelectorAll('thead th')];
+  const rows=[...table.querySelectorAll('tbody tr')].filter(r=>!r.querySelector('.empty'));
+  if(!rows.length||heads.length<3)return;
+  heads.forEach((th,i)=>{
+   th.hidden=false;
+   rows.forEach(r=>{if(r.children[i])r.children[i].hidden=false});
+  });
+  heads.forEach((th,i)=>{
+   const label=th.textContent.trim();
+   if(i===0||!label||label==='Details')return;
+   if(!columnIsEmpty(rows,i))return;
+   th.hidden=true;
+   rows.forEach(r=>{if(r.children[i])r.children[i].hidden=true});
+  });
+ });
+}
+window.gcTrimDeadColumns=trimDeadColumns;
+
+/* ---------- 4. land on a category that actually has data ----------- */
+
+function pickModuleWithData(){
+ const has=m=>state.records.some(r=>r.date===selectedDate&&r.module===m);
+ if(has(selectedModule))return;
+ const found=Object.keys(moduleLabels).find(has);
+ if(found)selectedModule=found;
+}
+
+const baseBind=bindPage;
+bindPage=function(){
+ baseBind.apply(this,arguments);
+ try{trimDeadColumns()}catch(e){}
+};
+
+/* Only after an import, so clicking an empty category tab does not
+   snap the user back to a different one. */
+const baseCommitImport=commitExcelImport;
+commitExcelImport=function(){
+ const r=baseCommitImport.apply(this,arguments);
+ try{pickModuleWithData();renderPage()}catch(e){}
+ return r;
+};
+
 })();
 </script>
 </body>
