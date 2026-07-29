@@ -3297,6 +3297,13 @@ parseGoldenCubeWorkbook=function(wb,fileName,importMonth){
   }
 
   /* ---- detail sheets ---- */
+  /* the business only reports on a fixed set of sheets; anything else
+     in the workbook is listed as ignored rather than imported */
+  if(window.gcIsDetailSheetAllowed&&!window.gcIsDetailSheetAllowed(name)){
+   out.ignored=out.ignored||[];
+   out.ignored.push(name);
+   continue;
+  }
   const hi=detectHeaderRow(rows);
   if(hi<0){
    if(knownModule)out.skipped.push(name+': no column headers were recognized');
@@ -3307,6 +3314,12 @@ parseGoldenCubeWorkbook=function(wb,fileName,importMonth){
      flags or nothing at all — check the values before trusting it */
   if(window.gcValidateMapping)window.gcValidateMapping(map,rows,hi);
   if(window.gcDropFileScore)window.gcDropFileScore(map);
+  /* an employee's own daily total is not a per-record value */
+  if(window.gcIsEmployeeTotal){
+   Object.keys(map).forEach(f=>{
+    if(window.gcIsEmployeeTotal(headers[map[f]]))delete map[f];
+   });
+  }
   const idCol=map.employee!=null?map.employee:(map.employeeId!=null?map.employeeId:map.employeeEmail);
   if(idCol==null){
    out.skipped.push(name+': no employee, employee ID or employee email column was recognized');
@@ -3315,6 +3328,11 @@ parseGoldenCubeWorkbook=function(wb,fileName,importMonth){
   out.sheets.push(rawName);
   out.columns[rawName]=headers.map((h,i)=>headerName(headers,i));
   out.mapping[rawName]=map;
+  if(window.gcReadSlaPolicy&&knownModule){
+   const policy=window.gcReadSlaPolicy(rows,hi);
+   if(policy){out.slaPolicies=out.slaPolicies||{};
+    out.slaPolicies[knownModule]=Object.assign({source:name},policy)}
+  }
 
   const sheetDate=excelDateOnly(rows[1]&&rows[1][1],selectedDate);
 
@@ -3403,6 +3421,19 @@ function columnPreview(){
    (extra.length?'<div class="muted" style="font-size:12px;margin-top:6px">Additional details: '+esc(extra.join(', '))+'</div>':'')+
    '</div>';
  }).join('');
+ const ignored=(p.ignored||[]).length
+  ?'<div class="role-note" style="margin-top:12px"><b>'+esc('Sheets not imported')+':</b> '+
+    esc(p.ignored.join(', '))+' — '+
+    esc('only '+(window.gcAllowedSheets?window.gcAllowedSheets().join(', '):'the configured report sheets')+
+        ' are read for performance data.')+'</div>'
+  :'';
+ const slaNote=p.slaPolicies&&Object.keys(p.slaPolicies).length
+  ?'<div class="role-note" style="margin-top:10px"><b>'+esc('SLA rules found in this file')+':</b> '+
+    Object.keys(p.slaPolicies).map(m=>esc((moduleLabels[m]||m)+' ('+p.slaPolicies[m].source+'): '+
+      p.slaPolicies[m].rules.map(r=>'≤'+r.maxMinutes+'min → '+Number(r.score).toFixed(2)).join(', ')+
+      ', over → '+Number(p.slaPolicies[m].fallback).toFixed(2))).join('<br>')+'</div>'
+  :'';
+ if(ignored||slaNote)host.insertAdjacentHTML('beforeend',ignored+slaNote);
  if(parts)host.insertAdjacentHTML('beforeend','<div style="margin-top:14px;border-top:1px solid var(--line);padding-top:10px">'+
   '<b>Columns matched from the file</b>'+parts+'</div>');
  applyLanguage(host);
@@ -3445,6 +3476,12 @@ commitExcelImport=function(){
  }
  baseCommitExcelImport.apply(this,arguments);
  if(window.gcConfirmImportedEmployees)window.gcConfirmImportedEmployees(incoming);
+ /* each report's own SLA rule becomes that category's policy */
+ if(p&&p.slaPolicies){
+  state.slaPolicies=state.slaPolicies||{};
+  Object.keys(p.slaPolicies).forEach(m=>{state.slaPolicies[m]=p.slaPolicies[m]});
+  save();
+ }
  const latest=dates.concat(scoreDates).sort().pop();
  if(latest){
   selectedDate=latest;
@@ -3501,7 +3538,8 @@ function additionalDetails(rec){
  if(!src||!src.columns||!src.columns.length)
   return '<div class="role-note">This record was entered manually, so there is no Excel source row.</div>';
  const used=new Set(Object.keys(src.map||{}).map(k=>src.map[k]));
- const extras=src.columns.filter(c=>!used.has(c.index));
+ const extras=src.columns.filter(c=>!used.has(c.index)&&
+   !(window.gcIsEmployeeTotal&&window.gcIsEmployeeTotal(c.header)));
  if(!extras.length)return '<div class="role-note">Every column in the source row is already shown above.</div>';
  return extras.map(c=>detailRow(c.header,cellDisplay(c.header,c.value))).join('');
 }
@@ -4488,7 +4526,9 @@ function extraColumns(r){
  if(!src||!src.columns||!src.columns.length)
   return '<div class="role-note">This record was entered manually, so there is no Excel source row.</div>';
  const used=new Set(Object.keys(src.map||{}).map(k=>src.map[k]));
- const extras=src.columns.filter(c=>!used.has(c.index));
+ /* the employee's own daily total belongs to the day, not to this row */
+ const extras=src.columns.filter(c=>!used.has(c.index)&&
+   !(window.gcIsEmployeeTotal&&window.gcIsEmployeeTotal(c.header)));
  if(!extras.length)return '<div class="role-note">Every column in the source row is already shown above.</div>';
  return extras.map(c=>row(c.header,window.gcCellDisplay?window.gcCellDisplay(c.header,c.value):c.value)).join('');
 }
@@ -7022,6 +7062,322 @@ commitExcelImport=function(){
  return r;
 };
 
+})();
+</script>
+<style id="gc-v18-css">
+.gc-policy-card{border:1px solid var(--line);border-radius:12px;padding:12px 14px;background:var(--card)}
+.gc-policy-card h4{margin:0 0 4px;font-size:13px}
+.gc-policy-card .muted{font-size:11px}
+.gc-policy-rules{margin-top:8px;font-size:12.5px}
+.gc-policy-rules div{display:flex;justify-content:space-between;gap:10px;
+  border-bottom:1px dashed var(--line);padding:4px 0}
+.gc-policy-rules div:last-child{border-bottom:0}
+.gc-policy-rules span{color:var(--muted)}
+.gc-policy-rules b{font-variant-numeric:tabular-nums}
+.gc-policy-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:12px;margin-top:12px}
+.gc-alert-tools{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px}
+</style>
+<script id="gc-v18-js">
+/* ===================================================================
+   Golden Cube v18
+   1. Only the report sheets the business uses are imported.
+   2. Each report carries its own SLA rule; the portal reads it and
+      scores that category by it.
+   3. An employee's own total is not repeated inside the per-record
+      breakdown.
+   4. Alerts and notifications can be marked read in one go.
+   =================================================================== */
+(function(){
+'use strict';
+
+function words(s){return String(s==null?'':s).toLowerCase().replace(/[^a-z0-9؀-ۿ]+/g,' ').replace(/\s+/g,' ').trim()}
+function text(v){return v==null||v===''||(typeof v==='string'&&!v.trim())?null:String(v).trim()}
+
+/* ---------- 1. which sheets count ---------------------------------- */
+
+const DEFAULT_SHEETS=['EDR','ZDR','DER','DIR'];
+
+function allowedSheets(){
+ const s=state.settings||{};
+ const list=Array.isArray(s.importSheets)&&s.importSheets.length?s.importSheets:DEFAULT_SHEETS;
+ return list.map(x=>String(x).trim().toUpperCase()).filter(Boolean);
+}
+window.gcAllowedSheets=allowedSheets;
+
+/* Score sheets are matched by shape, not by this list. */
+function isDetailSheetAllowed(name){
+ return allowedSheets().indexOf(String(name).trim().toUpperCase())>=0;
+}
+window.gcIsDetailSheetAllowed=isDetailSheetAllowed;
+
+/* ---------- 2. the SLA rule written inside each report -------------- */
+
+/* Reports state their own rule, and the rules differ between them:
+   "Within 10 minutes — 5", "1 to 2 hours — 4", "response within 2
+   minutes = 5 points". Both the table form and the sentence form are
+   read, and turned into one ladder per category. */
+
+const UNIT=/(minute|min|mins|hour|hr|hrs|second|sec)/i;
+
+function toMinutes(value,unitHint){
+ const n=Number(value);
+ if(!Number.isFinite(n))return null;
+ const u=String(unitHint||'').toLowerCase();
+ if(/hour|hr/.test(u))return n*60;
+ if(/sec/.test(u))return n/60;
+ return n;
+}
+
+/* Returns {max, openEnded} — the upper bound of a band in minutes. */
+function readBand(raw){
+ const s=String(raw==null?'':raw).replace(/[–—]/g,'-').trim();
+ if(!s)return null;
+ const low=s.toLowerCase();
+ const unit=(low.match(UNIT)||[])[0]||'minute';
+ const numbers=(low.match(/\d+(?:\.\d+)?/g)||[]).map(Number);
+ if(!numbers.length)return null;
+ const openAbove=/(more than|above|over|greater|exceed|beyond|\+\s*$|>)/.test(low);
+ const openBelow=/(less than|under|below|within|up to|at most|max|<=|<|≤)/.test(low);
+ if(openAbove)return {max:null,openEnded:true,from:toMinutes(numbers[0],unit)};
+ if(numbers.length>=2&&/-|to|through/.test(low))
+  return {max:toMinutes(numbers[1],unit),openEnded:false,from:toMinutes(numbers[0],unit)};
+ if(openBelow||numbers.length===1)
+  return {max:toMinutes(numbers[0],unit),openEnded:false,from:0};
+ return {max:toMinutes(numbers[numbers.length-1],unit),openEnded:false,from:toMinutes(numbers[0],unit)};
+}
+
+function validScore(v){
+ const n=Number(v);
+ return Number.isFinite(n)&&n>=0&&n<=5?n:null;
+}
+
+/* Sentence form: "response within 2 minutes = 5 points" */
+function fromSentence(line){
+ const s=String(line).replace(/[–—]/g,'-');
+ if(!UNIT.test(s))return null;
+ const scoreMatch=s.match(/(?:=|:|-|—|score of|scores?|points?|pts?)\s*(\d+(?:\.\d+)?)\s*(?:points?|pts?)?\s*$/i);
+ if(!scoreMatch)return null;
+ const score=validScore(scoreMatch[1]);
+ if(score==null)return null;
+ const band=readBand(s.slice(0,scoreMatch.index));
+ if(!band)return null;
+ return {max:band.max,score,openEnded:band.openEnded,label:s.trim()};
+}
+
+/* Table form: a band in one cell, a score in a nearby cell */
+function fromRow(cells){
+ const filled=cells.map(c=>text(c)).filter(x=>x!=null);
+ if(filled.length<2)return null;
+ const bandCell=filled.find(c=>UNIT.test(c)||/^\s*\d+\s*-\s*\d+\s*$/.test(c));
+ if(!bandCell)return null;
+ const rest=filled.filter(c=>c!==bandCell);
+ let score=null;
+ for(const c of rest){const v=validScore(c);if(v!=null){score=v;break}}
+ if(score==null)return null;
+ const band=readBand(bandCell);
+ if(!band)return null;
+ return {max:band.max,score,openEnded:band.openEnded,label:bandCell+' → '+score};
+}
+
+/* Only the block above the data table is scanned, so a record's own
+   duration is never mistaken for a rule. */
+function readSlaPolicy(rows,headerRow){
+ const found=[];
+ const limit=headerRow>0?headerRow:Math.min(rows.length,25);
+ for(let i=0;i<limit;i++){
+  const cells=(rows[i]||[]).map(c=>c);
+  const joined=cells.map(c=>text(c)).filter(Boolean).join(' ');
+  if(!joined)continue;
+  const rule=fromRow(cells)||fromSentence(joined);
+  if(rule)found.push(rule);
+ }
+ if(found.length<2)return null;
+ const bounded=found.filter(r=>r.max!=null).sort((a,b)=>a.max-b.max);
+ const open=found.filter(r=>r.max==null);
+ if(!bounded.length)return null;
+ return {
+  rules:bounded.map(r=>({maxMinutes:Math.round(r.max*100)/100,score:r.score,label:r.label})),
+  fallback:open.length?open[open.length-1].score:bounded[bounded.length-1].score,
+  labels:found.map(r=>r.label)
+ };
+}
+window.gcReadSlaPolicy=readSlaPolicy;
+
+function policies(){state.slaPolicies=state.slaPolicies||{};return state.slaPolicies}
+function policyFor(module){const p=policies()[module];return p&&p.rules&&p.rules.length?p:null}
+window.gcPolicyFor=policyFor;
+
+function scoreFromPolicy(policy,minutes){
+ if(minutes==null||!Number.isFinite(minutes))return null;
+ for(const rule of policy.rules){
+  if(minutes<=rule.maxMinutes)return rule.score;
+ }
+ return policy.fallback;
+}
+window.gcScoreFromPolicy=scoreFromPolicy;
+
+/* The category's own rule replaces the built-in ladder when the file
+   supplied one. Everything else about scoring is unchanged. */
+const baseRecordSla=recordSla;
+recordSla=function(r){
+ const policy=r&&r.module?policyFor(r.module):null;
+ if(!policy)return baseRecordSla.apply(this,arguments);
+ if(r.status==='pending')return null;
+ if(r.missed)return 0;
+ const minutes=durationMinutes(r);
+ if(minutes==null)return baseRecordSla.apply(this,arguments);
+ const value=scoreFromPolicy(policy,minutes);
+ return value==null?baseRecordSla.apply(this,arguments):value;
+};
+
+/* ---------- 3. an employee total is not a record value ------------- */
+
+const TOTAL_HEADERS=/^(total|totals|total score|final score|overall score|daily score|day score|grand total|average score|score total|net score|employee score|monthly score|weekly score)$/;
+
+function isEmployeeTotal(header){
+ const n=words(header);
+ if(!n)return false;
+ if(TOTAL_HEADERS.test(n))return true;
+ return /\b(total|overall|grand)\b/.test(n)&&/\b(score|points|rating)\b/.test(n);
+}
+window.gcIsEmployeeTotal=isEmployeeTotal;
+
+/* ---------- 4. read everything at once ----------------------------- */
+
+function markAllAlertsRead(){
+ const ids=automaticAlerts().map(a=>a.id);
+ state.alertReads=state.alertReads||[];
+ let added=0;
+ ids.forEach(id=>{if(state.alertReads.indexOf(id)<0){state.alertReads.push(id);added++}});
+ save();renderPage();
+ toast(added?added+' alerts marked as read.':'All alerts were already read.');
+}
+window.gcMarkAllAlertsRead=markAllAlertsRead;
+
+function dismissAllAlerts(){
+ const ids=automaticAlerts().map(a=>a.id);
+ state.alertDismissals=state.alertDismissals||[];
+ ids.forEach(id=>{if(state.alertDismissals.indexOf(id)<0)state.alertDismissals.push(id)});
+ save();renderPage();
+ toast(ids.length+' alerts dismissed.');
+}
+window.gcDismissAllAlerts=dismissAllAlerts;
+
+function markAllNotificationsRead(){
+ const u=currentUser();
+ let n=0;
+ (state.notifications||[]).forEach(x=>{if(x.userId===u.id&&!x.read){x.read=true;n++}});
+ save();
+ toast(n?n+' notifications marked as read.':'All notifications were already read.');
+ showNotifications();
+}
+window.gcMarkAllNotificationsRead=markAllNotificationsRead;
+
+const baseRenderAlerts=renderAlerts;
+renderAlerts=function(){
+ let html=baseRenderAlerts.apply(this,arguments);
+ const count=automaticAlerts().length;
+ const tools='<div class="gc-alert-tools">'+
+  '<button class="btn small" id="alertsReadAll"'+(count?'':' disabled')+'>Mark all as read</button>'+
+  '<button class="btn small" id="alertsDismissAll"'+(count?'':' disabled')+'>Dismiss all</button>'+
+  '</div>';
+ return html.replace('<div class="alert-list">',tools+'<div class="alert-list">');
+};
+
+const baseShowNotifications=showNotifications;
+showNotifications=function(){
+ baseShowNotifications.apply(this,arguments);
+ const foot=document.querySelector('#modalRoot .modal-foot');
+ if(!foot||foot.querySelector('[data-read-all]'))return;
+ const u=currentUser();
+ const unread=(state.notifications||[]).filter(n=>n.userId===u.id&&!n.read).length;
+ const btn=document.createElement('button');
+ btn.className='btn';
+ btn.setAttribute('data-read-all','1');
+ btn.textContent='Mark all as read';
+ btn.disabled=!unread;
+ btn.onclick=markAllNotificationsRead;
+ foot.insertBefore(btn,foot.firstChild);
+ applyLanguage(document.getElementById('modalRoot'));
+};
+
+/* ---------- 5. showing the policy --------------------------------- */
+
+function describe(rule,index,rules){
+ const from=index===0?0:rules[index-1].maxMinutes;
+ const label=index===0?('Up to '+rule.maxMinutes+' min'):(from+'–'+rule.maxMinutes+' min');
+ return '<div><span>'+esc(label)+'</span><b>'+Number(rule.score).toFixed(2)+'</b></div>';
+}
+
+function policyCard(module){
+ const p=policyFor(module);
+ const label=moduleLabels[module]||module;
+ if(!p)return '<div class="gc-policy-card"><h4>'+esc(label)+'</h4>'+
+   '<div class="muted">'+esc('No rule found in the file. The portal default is used.')+'</div></div>';
+ const last=p.rules[p.rules.length-1];
+ return '<div class="gc-policy-card"><h4>'+esc(label)+'</h4>'+
+  '<div class="muted">'+esc('Read from '+(p.source||'the imported report'))+'</div>'+
+  '<div class="gc-policy-rules">'+
+   p.rules.map((r,i)=>describe(r,i,p.rules)).join('')+
+   '<div><span>'+esc('Over '+last.maxMinutes+' min')+'</span><b>'+Number(p.fallback).toFixed(2)+'</b></div>'+
+  '</div></div>';
+}
+
+const baseRenderSettings=renderSettings;
+renderSettings=function(){
+ let html=baseRenderSettings.apply(this,arguments);
+ const mods=Object.keys(moduleLabels);
+ const card='<div class="card section-card" style="margin-top:16px">'+
+  '<div class="section-head"><div><h2>SLA rules read from the reports</h2>'+
+  '<p>Each report states how its own SLA is scored. The portal reads that rule when the file is imported and applies it to that category.</p></div>'+
+  '<button class="btn small" id="slaPolicyReset">Restore portal defaults</button></div>'+
+  '<div class="gc-policy-grid">'+mods.map(policyCard).join('')+'</div>'+
+  '<div class="field" style="margin-top:16px"><label>Report sheets to import</label>'+
+   '<input id="slaSheets" value="'+esc(allowedSheets().join(', '))+'">'+
+   '<small class="muted">Only these sheets are read for performance data. Other sheets in the workbook are ignored.</small></div>'+
+  '<div class="toolbar" style="margin-top:10px"><button class="btn small primary" id="slaSheetsSave">Save sheet list</button></div>'+
+  '</div>';
+ return html+card;
+};
+
+const baseBind=bindPage;
+bindPage=function(){
+ baseBind.apply(this,arguments);
+ const on=(id,fn)=>{const el=document.getElementById(id);if(el)el.onclick=fn};
+ on('alertsReadAll',markAllAlertsRead);
+ on('alertsDismissAll',dismissAllAlerts);
+ on('slaPolicyReset',()=>{
+  state.slaPolicies={};save();renderPage();
+  toast('SLA rules reset to the portal defaults.');
+ });
+ on('slaSheetsSave',()=>{
+  const raw=val('slaSheets')||'';
+  const list=raw.split(/[,;\s]+/).map(x=>x.trim().toUpperCase()).filter(Boolean);
+  state.settings.importSheets=list.length?list:DEFAULT_SHEETS.slice();
+  save();renderPage();
+  toast('Import sheet list saved: '+state.settings.importSheets.join(', '));
+ });
+};
+
+const AR={
+ 'Mark all as read':'تعليم الكل كمقروء','Dismiss all':'تجاهل الكل',
+ 'SLA rules read from the reports':'قواعد مستوى الخدمة المقروءة من التقارير',
+ 'Each report states how its own SLA is scored. The portal reads that rule when the file is imported and applies it to that category.':'يوضح كل تقرير طريقة احتساب مستوى الخدمة الخاصة به. تقرأ البوابة تلك القاعدة عند استيراد الملف وتطبقها على تلك الفئة.',
+ 'Restore portal defaults':'استعادة إعدادات البوابة الافتراضية',
+ 'No rule found in the file. The portal default is used.':'لم يتم العثور على قاعدة في الملف. يتم استخدام الإعداد الافتراضي.',
+ 'Report sheets to import':'أوراق التقارير المراد استيرادها',
+ 'Only these sheets are read for performance data. Other sheets in the workbook are ignored.':'تُقرأ بيانات الأداء من هذه الأوراق فقط. تُتجاهل باقي الأوراق في الملف.',
+ 'Save sheet list':'حفظ قائمة الأوراق',
+ 'SLA rules reset to the portal defaults.':'تمت إعادة قواعد مستوى الخدمة إلى الإعداد الافتراضي.',
+ 'All alerts were already read.':'جميع التنبيهات مقروءة بالفعل.',
+ 'All notifications were already read.':'جميع الإشعارات مقروءة بالفعل.'
+};
+if(typeof ARABIC_TEXT==='object'&&ARABIC_TEXT){
+ Object.keys(AR).forEach(k=>{if(!ARABIC_TEXT[k])ARABIC_TEXT[k]=AR[k]});
+ if(typeof ENGLISH_TEXT==='object'&&ENGLISH_TEXT){
+  Object.keys(AR).forEach(k=>{if(!ENGLISH_TEXT[AR[k]])ENGLISH_TEXT[AR[k]]=k});
+ }
+}
 })();
 </script>
 </body>
